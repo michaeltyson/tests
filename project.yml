@@ -1,0 +1,93 @@
+name: Tests
+options:
+  bundleIdPrefix: com.atastypixel
+  deploymentTarget:
+    macOS: "15.0"
+  developmentLanguage: en
+  xcodeVersion: "16.0"
+
+targets:
+  TestsCLI:
+    type: tool
+    platform: macOS
+    deploymentTarget: "15.0"
+    sources:
+      - path: CLI
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.atastypixel.TestsCLI
+      SWIFT_VERSION: "5.0"
+      MACOSX_DEPLOYMENT_TARGET: "15.0"
+  
+  Tests:
+    type: application
+    platform: macOS
+    deploymentTarget: "15.0"
+    sources:
+      - path: Tests
+        excludes:
+          - "**/Preview Content/**"
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.atastypixel.Tests
+      INFOPLIST_KEY_LSUIElement: YES
+      INFOPLIST_KEY_NSHumanReadableCopyright: ""
+      CODE_SIGN_ENTITLEMENTS: Tests/Tests.entitlements
+      ENABLE_HARDENED_RUNTIME: YES
+      ENABLE_PREVIEWS: YES
+      SWIFT_VERSION: "5.0"
+      MACOSX_DEPLOYMENT_TARGET: "15.0"
+    entitlements:
+      path: Tests/Tests.entitlements
+    info:
+      path: Tests/Info.plist
+      properties:
+        LSUIElement: true
+    resources:
+      - path: Tests/Assets.xcassets
+      - path: Tests/Resources/post-commit
+        buildPhase: resources
+    dependencies:
+      - target: TestsCLI
+    postCompileScripts:
+      - name: Copy CLI to App Bundle
+        script: |
+          if [ -d "${BUILT_PRODUCTS_DIR}/Tests.app" ] && [ -f "${BUILT_PRODUCTS_DIR}/TestsCLI" ]; then
+            mkdir -p "${BUILT_PRODUCTS_DIR}/Tests.app/Contents/MacOS"
+            cp "${BUILT_PRODUCTS_DIR}/TestsCLI" "${BUILT_PRODUCTS_DIR}/Tests.app/Contents/MacOS/TestsCLI"
+            chmod +x "${BUILT_PRODUCTS_DIR}/Tests.app/Contents/MacOS/TestsCLI"
+          fi
+        inputFiles:
+          - "${BUILT_PRODUCTS_DIR}/TestsCLI"
+        outputFiles:
+          - "${BUILT_PRODUCTS_DIR}/Tests.app/Contents/MacOS/TestsCLI"
+      - name: Copy post-commit hook to App Bundle
+        script: |
+          if [ -d "${BUILT_PRODUCTS_DIR}/Tests.app" ]; then
+            mkdir -p "${BUILT_PRODUCTS_DIR}/Tests.app/Contents/Resources"
+            cp "${SRCROOT}/Tests/Resources/post-commit" "${BUILT_PRODUCTS_DIR}/Tests.app/Contents/Resources/post-commit"
+            chmod +x "${BUILT_PRODUCTS_DIR}/Tests.app/Contents/Resources/post-commit"
+          fi
+        inputFiles:
+          - "${SRCROOT}/Tests/Resources/post-commit"
+        outputFiles:
+          - "${BUILT_PRODUCTS_DIR}/Tests.app/Contents/Resources/post-commit"
+    postBuildScripts:
+      - name: Clean up TestsCLI from Resources
+        script: |
+          # Remove TestsCLI from Resources (it should only be in MacOS)
+          rm -f "${BUILT_PRODUCTS_DIR}/Tests.app/Contents/Resources/TestsCLI"
+
+schemes:
+  Tests:
+    build:
+      targets:
+        Tests: all
+        TestsCLI: all
+    run:
+      config: Debug
+  TestsCLI:
+    build:
+      targets:
+        TestsCLI: all
+    run:
+      config: Debug
+

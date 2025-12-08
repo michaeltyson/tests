@@ -1,0 +1,43 @@
+#!/bin/bash
+
+# Post-commit hook for Tests app
+# This script triggers the Tests app to run tests for the current branch
+#
+# To use this hook:
+# 1. Copy or symlink this file to your repository's .git/hooks/post-commit
+# 2. Make sure it's executable: chmod +x .git/hooks/post-commit
+#
+# Example symlink:
+# ln -s /path/to/Tests.app/Contents/Resources/post-commit /path/to/repo/.git/hooks/post-commit
+
+# Get the current branch name
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+
+# Get the path to TestsCLI
+# This script is in the app bundle's Resources folder
+# Resolve symlinks to get the actual script location
+SCRIPT_PATH="${BASH_SOURCE[0]}"
+# If it's a symlink, resolve it
+while [ -L "$SCRIPT_PATH" ]; do
+    SCRIPT_PATH="$(readlink "$SCRIPT_PATH")"
+    # If relative symlink, resolve relative to the directory containing the symlink
+    if [[ "$SCRIPT_PATH" != /* ]]; then
+        SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$SCRIPT_PATH"
+    fi
+done
+SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+APP_BUNDLE_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+CLI_PATH="$APP_BUNDLE_DIR/Contents/MacOS/TestsCLI"
+
+# Check if TestsCLI exists
+if [ ! -f "$CLI_PATH" ]; then
+    echo "Error: TestsCLI not found at $CLI_PATH" >&2
+    exit 1
+fi
+
+# Trigger test run with current branch
+"$CLI_PATH" trigger --branch "$BRANCH"
+
+exit 0
+
+
