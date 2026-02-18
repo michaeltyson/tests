@@ -235,7 +235,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         print("AppDelegate: Received RunTests notification from menu bar")
         // Use branch from settings for manual runs
         let branchName = SettingsStore.shared.branchName
-        testRunner.runTests(branchName: branchName)
+        testRunner.runTests(branchName: branchName, isManualRun: true)
     }
     
     @objc func handlePauseTestsNotification() {
@@ -290,7 +290,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             // Only run tests if a branch was actually selected (not cancelled)
             // If branchName is nil, user cancelled - don't run tests
             if let branch = branchName, !branch.isEmpty {
-                self?.testRunner.runTests(branchName: branch)
+                self?.testRunner.runTests(branchName: branch, isManualRun: true)
             }
             // If branchName is nil or empty, user cancelled - do nothing
         }

@@ -42,11 +42,11 @@ class TestRunner: ObservableObject {
         tempFolder = appSupport.appendingPathComponent("Tests/TempWorkspace", isDirectory: true)
     }
     
-    func runTests(branchName: String? = nil) {
-        print("TestRunner: runTests() called with branch: \(branchName ?? "nil")")
+    func runTests(branchName: String? = nil, isManualRun: Bool = false) {
+        print("TestRunner: runTests() called with branch: \(branchName ?? "nil"), isManualRun: \(isManualRun)")
         
-        // If paused, ignore the request
-        if isPaused {
+        // Ignore automatic triggers while paused, but still allow explicit manual runs.
+        if isPaused && !isManualRun {
             print("TestRunner: Tests are paused, ignoring run request")
             return
         }
