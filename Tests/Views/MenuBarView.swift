@@ -112,19 +112,9 @@ class MenuBarManager: ObservableObject {
             return
         }
         
-        // For pause icon, use white color via palette
-        let configuredImage: NSImage
-        if iconName == "pause.fill" {
-            // Create a white version of the pause icon
-            let coloredConfig = NSImage.SymbolConfiguration(pointSize: 16, weight: .regular)
-                .applying(.init(paletteColors: [.white]))
-            configuredImage = image.withSymbolConfiguration(coloredConfig) ?? image
-            configuredImage.isTemplate = false // Non-template so color shows
-        } else {
-            // For other icons, use template (they'll adapt to light/dark mode)
-            image.isTemplate = true
-            configuredImage = image.withSymbolConfiguration(config) ?? image
-        }
+        // Use template mode for all icons (default system color)
+        image.isTemplate = true
+        let configuredImage = image.withSymbolConfiguration(config) ?? image
         
         // Ensure button is visible and properly configured
         button.isHidden = false
@@ -132,9 +122,6 @@ class MenuBarManager: ObservableObject {
         
         // Set the image
         button.image = configuredImage
-        
-        // Clear tint color since we're using colored images directly
-        button.contentTintColor = nil
         
         // Ensure status item has proper length and is visible
         statusItem.length = NSStatusItem.variableLength
