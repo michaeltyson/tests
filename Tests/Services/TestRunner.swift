@@ -70,7 +70,12 @@ class TestRunner: ObservableObject {
         }
         
         // Determine which branch to use: notification branch > settings branch > "develop"
-        let branchToUse = branchName ?? settings.branchName ?? "develop"
+        // Trim any leading "+" or whitespace that might have been accidentally included
+        var branchToUse = branchName ?? settings.branchName ?? "develop"
+        branchToUse = branchToUse.trimmingCharacters(in: .whitespaces)
+        if branchToUse.hasPrefix("+") {
+            branchToUse = String(branchToUse.dropFirst()).trimmingCharacters(in: .whitespaces)
+        }
         
         print("TestRunner: Using repository path: \(settings.repositoryPath)")
         print("TestRunner: Using branch: \(branchToUse)")
@@ -112,9 +117,7 @@ class TestRunner: ObservableObject {
             guard self.fileManager.fileExists(atPath: repositoryRoot.path) else {
                 print("TestRunner: ERROR - Repository path does not exist: \(repositoryRoot.path)")
                 self.showError("Repository path not found", message: "The configured repository path does not exist. Please check Settings.")
-                DispatchQueue.main.async {
-                    self.isRunning = false
-                }
+                self.abortRun(removeCurrentRun: true)
                 return
             }
             
@@ -128,9 +131,7 @@ class TestRunner: ObservableObject {
             } catch {
                 print("TestRunner: ERROR - Failed to create temp folder: \(error)")
                 self.showError("Failed to create temp folder", message: error.localizedDescription)
-                DispatchQueue.main.async {
-                    self.isRunning = false
-                }
+                self.abortRun(removeCurrentRun: true)
                 return
             }
             
@@ -142,23 +143,26 @@ class TestRunner: ObservableObject {
                 print("TestRunner: Cloning repository...")
                 self.cloneRepositorySync(from: repositoryRoot, to: self.tempFolder)
             } else {
+                // Fetch latest changes from remote
                 DispatchQueue.main.async {
-                    self.output += "Pulling repository updates...\n"
+                    self.output += "Fetching repository updates...\n"
                 }
-                print("TestRunner: Pulling repository updates...")
-                self.pullRepositorySync(in: self.tempFolder)
+                print("TestRunner: Fetching repository updates...")
+                if !self.fetchRepositorySync(in: self.tempFolder) {
+                    self.showError("Failed to fetch repository", message: "Could not fetch repository updates. Please check the repository state.")
+                    self.abortRun(removeCurrentRun: true)
+                    return
+                }
             }
             
-            // Checkout branch (always checkout, defaulting to "develop")
+            // Checkout branch and reset to match remote (handles divergent branches)
             DispatchQueue.main.async {
                 self.output += "Checking out branch '\(branchToUse)'...\n"
             }
             print("TestRunner: Checking out branch: \(branchToUse)")
-            if !self.checkoutBranchSync(branchToUse, in: self.tempFolder) {
+            if !self.checkoutAndResetBranchSync(branchToUse, in: self.tempFolder) {
                 self.showError("Failed to checkout branch", message: "Could not checkout branch '\(branchToUse)'. Please verify the branch exists.")
-                DispatchQueue.main.async {
-                    self.isRunning = false
-                }
+                self.abortRun(removeCurrentRun: true)
                 return
             }
             
@@ -170,9 +174,7 @@ class TestRunner: ObservableObject {
             guard let workspaceURL = WorkspaceFinder.findWorkspace(in: self.tempFolder) else {
                 print("TestRunner: ERROR - Could not find .xcworkspace file in repository root")
                 self.showError("Workspace not found", message: "Could not find .xcworkspace file in repository root. Please check the repository path in Settings.")
-                DispatchQueue.main.async {
-                    self.isRunning = false
-                }
+                self.abortRun(removeCurrentRun: true)
                 return
             }
             
@@ -297,7 +299,69 @@ class TestRunner: ObservableObject {
         }
     }
     
-    private func pullRepositorySync(in directory: URL) {
+    private func fetchRepositorySync(in directory: URL) -> Bool {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        process.arguments = ["fetch", "origin"]
+        process.currentDirectoryURL = directory
+        let outputPipe = Pipe()
+        let errorPipe = Pipe()
+        process.standardOutput = outputPipe
+        process.standardError = errorPipe
+        
+        // Set up output reading
+        let outputHandle = outputPipe.fileHandleForReading
+        outputHandle.readabilityHandler = { [weak self] handle in
+            let data = handle.availableData
+            if !data.isEmpty {
+                guard let string = String(data: data, encoding: .utf8) else { return }
+                DispatchQueue.main.async {
+                    self?.output += string
+                }
+            }
+        }
+        
+        let errorHandle = errorPipe.fileHandleForReading
+        errorHandle.readabilityHandler = { [weak self] handle in
+            let data = handle.availableData
+            if !data.isEmpty {
+                guard let string = String(data: data, encoding: .utf8) else { return }
+                DispatchQueue.main.async {
+                    self?.output += string
+                }
+            }
+        }
+        
+        do {
+            try process.run()
+            process.waitUntilExit()
+            
+            // Clean up handlers
+            outputHandle.readabilityHandler = nil
+            errorHandle.readabilityHandler = nil
+            
+            // Check if fetch succeeded
+            if process.terminationStatus == 0 {
+                return true
+            }
+            
+            // If fetch failed, read error output for debugging
+            let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+            if let errorString = String(data: errorData, encoding: .utf8) {
+                print("TestRunner: Git fetch error: \(errorString)")
+            }
+            
+            return false
+        } catch {
+            print("Failed to fetch repository: \(error)")
+            DispatchQueue.main.async { [weak self] in
+                self?.output += "Error: Failed to fetch repository: \(error.localizedDescription)\n"
+            }
+            return false
+        }
+    }
+    
+    private func pullRepositorySync(in directory: URL) -> Bool {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
         process.arguments = ["pull"]
@@ -337,10 +401,89 @@ class TestRunner: ObservableObject {
             // Clean up handlers
             outputHandle.readabilityHandler = nil
             errorHandle.readabilityHandler = nil
+            
+            // Check if pull succeeded
+            if process.terminationStatus == 0 {
+                return true
+            }
+            
+            // If pull failed, read error output for debugging
+            let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+            if let errorString = String(data: errorData, encoding: .utf8) {
+                print("TestRunner: Git pull error: \(errorString)")
+            }
+            
+            return false
         } catch {
             print("Failed to pull repository: \(error)")
             DispatchQueue.main.async { [weak self] in
                 self?.output += "Error: Failed to pull repository: \(error.localizedDescription)\n"
+            }
+            return false
+        }
+    }
+    
+    private func checkoutAndResetBranchSync(_ branchName: String, in directory: URL) -> Bool {
+        // First, try to checkout the branch
+        let checkoutProcess = Process()
+        checkoutProcess.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        checkoutProcess.arguments = ["checkout", branchName]
+        checkoutProcess.currentDirectoryURL = directory
+        let checkoutOutputPipe = Pipe()
+        let checkoutErrorPipe = Pipe()
+        checkoutProcess.standardOutput = checkoutOutputPipe
+        checkoutProcess.standardError = checkoutErrorPipe
+        
+        // Set up output reading for checkout
+        let checkoutOutputHandle = checkoutOutputPipe.fileHandleForReading
+        checkoutOutputHandle.readabilityHandler = { [weak self] handle in
+            let data = handle.availableData
+            if !data.isEmpty {
+                guard let string = String(data: data, encoding: .utf8) else { return }
+                DispatchQueue.main.async {
+                    self?.output += string
+                }
+            }
+        }
+        
+        let checkoutErrorHandle = checkoutErrorPipe.fileHandleForReading
+        checkoutErrorHandle.readabilityHandler = { [weak self] handle in
+            let data = handle.availableData
+            if !data.isEmpty {
+                guard let string = String(data: data, encoding: .utf8) else { return }
+                DispatchQueue.main.async {
+                    self?.output += string
+                }
+            }
+        }
+        
+        do {
+            try checkoutProcess.run()
+            checkoutProcess.waitUntilExit()
+            
+            // Clean up handlers
+            checkoutOutputHandle.readabilityHandler = nil
+            checkoutErrorHandle.readabilityHandler = nil
+        } catch {
+            print("Failed to checkout branch: \(error)")
+            DispatchQueue.main.async { [weak self] in
+                self?.output += "Error: Failed to checkout branch: \(error.localizedDescription)\n"
+            }
+            return false
+        }
+        
+        // Now reset the branch to match the remote (this handles divergent branches)
+        return resetToRemoteBranch(branchName, in: directory)
+    }
+    
+    private func abortRun(removeCurrentRun: Bool) {
+        DispatchQueue.main.async {
+            self.isRunning = false
+            self.isBuilding = false
+            
+            if removeCurrentRun, let currentRun = self.currentTestRun {
+                NotificationCenter.default.post(name: NSNotification.Name("DeleteTestRun"), object: currentRun)
+                self.currentTestRun = nil
             }
         }
     }
@@ -402,6 +545,119 @@ class TestRunner: ObservableObject {
             DispatchQueue.main.async { [weak self] in
                 self?.output += "Error: Failed to checkout branch: \(error.localizedDescription)\n"
             }
+            return false
+        }
+    }
+    
+    private func resetToRemoteBranch(_ branchName: String, in directory: URL) -> Bool {
+        // Check if remote branch exists
+        let checkProcess = Process()
+        checkProcess.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        checkProcess.arguments = ["show-ref", "--verify", "--quiet", "refs/remotes/origin/\(branchName)"]
+        checkProcess.currentDirectoryURL = directory
+        
+        do {
+            try checkProcess.run()
+            checkProcess.waitUntilExit()
+            
+            // If remote branch doesn't exist, just return true (local branch is fine)
+            if checkProcess.terminationStatus != 0 {
+                print("TestRunner: Remote branch 'origin/\(branchName)' does not exist, skipping reset")
+                return true
+            }
+        } catch {
+            print("Failed to check remote branch: \(error)")
+            // If we can't check, assume it exists and try to reset
+        }
+        
+        // Reset local branch to match remote
+        let resetProcess = Process()
+        resetProcess.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        resetProcess.arguments = ["reset", "--hard", "origin/\(branchName)"]
+        resetProcess.currentDirectoryURL = directory
+        let resetOutputPipe = Pipe()
+        let resetErrorPipe = Pipe()
+        resetProcess.standardOutput = resetOutputPipe
+        resetProcess.standardError = resetErrorPipe
+        
+        // Set up output reading for reset
+        let resetOutputHandle = resetOutputPipe.fileHandleForReading
+        resetOutputHandle.readabilityHandler = { [weak self] handle in
+            let data = handle.availableData
+            if !data.isEmpty {
+                guard let string = String(data: data, encoding: .utf8) else { return }
+                DispatchQueue.main.async {
+                    self?.output += string
+                }
+            }
+        }
+        
+        let resetErrorHandle = resetErrorPipe.fileHandleForReading
+        resetErrorHandle.readabilityHandler = { [weak self] handle in
+            let data = handle.availableData
+            if !data.isEmpty {
+                guard let string = String(data: data, encoding: .utf8) else { return }
+                DispatchQueue.main.async {
+                    self?.output += string
+                }
+            }
+        }
+        
+        do {
+            try resetProcess.run()
+            resetProcess.waitUntilExit()
+            
+            // Clean up handlers
+            resetOutputHandle.readabilityHandler = nil
+            resetErrorHandle.readabilityHandler = nil
+            
+            if resetProcess.terminationStatus == 0 {
+                return true
+            }
+            
+            let errorData = resetErrorPipe.fileHandleForReading.readDataToEndOfFile()
+            if let errorString = String(data: errorData, encoding: .utf8) {
+                print("TestRunner: Git reset error: \(errorString)")
+            }
+            
+            return false
+        } catch {
+            print("Failed to reset branch: \(error)")
+            return false
+        }
+    }
+    
+    private func ensureBranchTracksRemote(_ branchName: String, in directory: URL) -> Bool {
+        // Check if branch is tracking remote and if there are divergent commits
+        let statusProcess = Process()
+        statusProcess.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        statusProcess.arguments = ["status", "-sb"]
+        statusProcess.currentDirectoryURL = directory
+        let statusOutputPipe = Pipe()
+        statusProcess.standardOutput = statusOutputPipe
+        
+        do {
+            try statusProcess.run()
+            statusProcess.waitUntilExit()
+            
+            if statusProcess.terminationStatus == 0 {
+                let data = statusOutputPipe.fileHandleForReading.readDataToEndOfFile()
+                if let statusString = String(data: data, encoding: .utf8) {
+                    // Check if branch has diverged (contains "ahead" and "behind" or just "diverged")
+                    if statusString.contains("diverged") || (statusString.contains("ahead") && statusString.contains("behind")) {
+                        // Branch has diverged, reset to remote
+                        DispatchQueue.main.async {
+                            self.output += "Branch has diverged from remote. Resetting to match remote...\n"
+                        }
+                        print("TestRunner: Branch has diverged, resetting to remote")
+                        return resetToRemoteBranch(branchName, in: directory)
+                    }
+                }
+            }
+            
+            return true
+        } catch {
+            print("Failed to check branch status: \(error)")
             return false
         }
     }
@@ -988,4 +1244,3 @@ class TestRunner: ObservableObject {
         }
     }
 }
-

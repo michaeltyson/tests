@@ -165,6 +165,11 @@ struct BranchSelectionView: View {
                                 branch = String(branch.dropFirst(2))
                             }
                             
+                            // Remove leading "+ " if present (branches ahead of remote)
+                            if branch.hasPrefix("+ ") {
+                                branch = String(branch.dropFirst(2))
+                            }
+                            
                             // Remove "remotes/" or "remotes/origin/" prefix but preserve branch name structure
                             if branch.hasPrefix("remotes/origin/") {
                                 branch = String(branch.dropFirst("remotes/origin/".count))
@@ -172,7 +177,7 @@ struct BranchSelectionView: View {
                                 branch = String(branch.dropFirst("remotes/".count))
                             }
                             
-                            return branch
+                            return branch.trimmingCharacters(in: .whitespaces)
                         }
                         .filter { !$0.isEmpty }
                         .filter { !$0.hasPrefix("HEAD") }
