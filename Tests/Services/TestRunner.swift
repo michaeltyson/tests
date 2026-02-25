@@ -31,6 +31,7 @@ class TestRunner: ObservableObject {
     private var errorHandle: FileHandle?
     private var cancellables = Set<AnyCancellable>()
     private var isCancelled = false
+    private let setupQueue = DispatchQueue(label: "com.atastypixel.Tests.setupQueue", qos: .userInitiated)
     
     private let tempFolder: URL
     private let fileManager = FileManager.default
@@ -109,8 +110,8 @@ class TestRunner: ObservableObject {
             self.sendTestStartNotification(branchName: branchToUse)
         }
         
-        // Move all setup work to background thread
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+        // Move all setup work to a serial background queue to avoid overlapping git operations.
+        setupQueue.async { [weak self] in
             guard let self = self else { return }
             
             // Verify repository path exists
@@ -141,17 +142,32 @@ class TestRunner: ObservableObject {
                     self.output += "Cloning repository...\n"
                 }
                 print("TestRunner: Cloning repository...")
-                self.cloneRepositorySync(from: repositoryRoot, to: self.tempFolder)
+                if !self.cloneRepositorySync(from: repositoryRoot, to: self.tempFolder) {
+                    self.showError("Failed to clone repository", message: "Could not clone repository into the temp workspace.")
+                    self.abortRun(removeCurrentRun: true)
+                    return
+                }
             } else {
                 // Fetch latest changes from remote
                 DispatchQueue.main.async {
                     self.output += "Fetching repository updates...\n"
                 }
                 print("TestRunner: Fetching repository updates...")
-                if !self.fetchRepositorySync(in: self.tempFolder) {
-                    self.showError("Failed to fetch repository", message: "Could not fetch repository updates. Please check the repository state.")
-                    self.abortRun(removeCurrentRun: true)
-                    return
+                let fetchResult = self.fetchRepositorySync(in: self.tempFolder)
+                if !fetchResult.success {
+                    print("TestRunner: Fetch failed, rebuilding workspace and retrying")
+                    DispatchQueue.main.async {
+                        self.output += "Fetch failed. Recreating workspace and retrying...\n"
+                    }
+                    if !self.recreateWorkspaceSync(from: repositoryRoot) {
+                        let detail = fetchResult.output.isEmpty ? "No additional git output available." : fetchResult.output
+                        self.showError(
+                            "Failed to fetch repository",
+                            message: "Could not fetch repository updates.\n\nGit output:\n\(detail)"
+                        )
+                        self.abortRun(removeCurrentRun: true)
+                        return
+                    }
                 }
             }
             
@@ -251,224 +267,91 @@ class TestRunner: ObservableObject {
         errorHandle = nil
     }
     
-    private func cloneRepositorySync(from source: URL, to destination: URL) {
+    private struct GitCommandResult {
+        let success: Bool
+        let output: String
+    }
+    
+    @discardableResult
+    private func runGitCommandSync(
+        _ arguments: [String],
+        in directory: URL? = nil
+    ) -> GitCommandResult {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        // Remove --depth 1 to get all branches (needed for branch checkout)
-        process.arguments = ["clone", "file://\(source.path)", destination.path]
-        let outputPipe = Pipe()
-        let errorPipe = Pipe()
-        process.standardOutput = outputPipe
-        process.standardError = errorPipe
+        process.arguments = arguments
+        process.currentDirectoryURL = directory
         
-        // Set up output reading
-        let outputHandle = outputPipe.fileHandleForReading
-        outputHandle.readabilityHandler = { [weak self] handle in
-            let data = handle.availableData
-            if !data.isEmpty {
-                guard let string = String(data: data, encoding: .utf8) else { return }
-                DispatchQueue.main.async {
-                    self?.output += string
-                }
-            }
-        }
-        
-        let errorHandle = errorPipe.fileHandleForReading
-        errorHandle.readabilityHandler = { [weak self] handle in
-            let data = handle.availableData
-            if !data.isEmpty {
-                guard let string = String(data: data, encoding: .utf8) else { return }
-                DispatchQueue.main.async {
-                    self?.output += string
-                }
-            }
-        }
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
         
         do {
             try process.run()
             process.waitUntilExit()
             
-            // Clean up handlers
-            outputHandle.readabilityHandler = nil
-            errorHandle.readabilityHandler = nil
-        } catch {
-            print("Failed to clone repository: \(error)")
-            DispatchQueue.main.async { [weak self] in
-                self?.output += "Error: Failed to clone repository: \(error.localizedDescription)\n"
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            let outputString = String(data: data, encoding: .utf8) ?? ""
+            
+            if !outputString.isEmpty {
+                DispatchQueue.main.async { [weak self] in
+                    self?.output += outputString
+                }
             }
+            
+            let success = process.terminationStatus == 0
+            if !success {
+                let command = arguments.joined(separator: " ")
+                let trimmed = outputString.trimmingCharacters(in: .whitespacesAndNewlines)
+                print("TestRunner: Git command failed (\(command))")
+                if !trimmed.isEmpty {
+                    print("TestRunner: Git output: \(trimmed)")
+                }
+            }
+            return GitCommandResult(success: success, output: outputString)
+        } catch {
+            let message = "Failed to run git command (\(arguments.joined(separator: " "))): \(error.localizedDescription)"
+            print("TestRunner: \(message)")
+            DispatchQueue.main.async { [weak self] in
+                self?.output += "\(message)\n"
+            }
+            return GitCommandResult(success: false, output: message)
         }
     }
     
-    private func fetchRepositorySync(in directory: URL) -> Bool {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        process.arguments = ["fetch", "origin"]
-        process.currentDirectoryURL = directory
-        let outputPipe = Pipe()
-        let errorPipe = Pipe()
-        process.standardOutput = outputPipe
-        process.standardError = errorPipe
-        
-        // Set up output reading
-        let outputHandle = outputPipe.fileHandleForReading
-        outputHandle.readabilityHandler = { [weak self] handle in
-            let data = handle.availableData
-            if !data.isEmpty {
-                guard let string = String(data: data, encoding: .utf8) else { return }
-                DispatchQueue.main.async {
-                    self?.output += string
-                }
-            }
-        }
-        
-        let errorHandle = errorPipe.fileHandleForReading
-        errorHandle.readabilityHandler = { [weak self] handle in
-            let data = handle.availableData
-            if !data.isEmpty {
-                guard let string = String(data: data, encoding: .utf8) else { return }
-                DispatchQueue.main.async {
-                    self?.output += string
-                }
-            }
-        }
-        
-        do {
-            try process.run()
-            process.waitUntilExit()
-            
-            // Clean up handlers
-            outputHandle.readabilityHandler = nil
-            errorHandle.readabilityHandler = nil
-            
-            // Check if fetch succeeded
-            if process.terminationStatus == 0 {
-                return true
-            }
-            
-            // If fetch failed, read error output for debugging
-            let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
-            if let errorString = String(data: errorData, encoding: .utf8) {
-                print("TestRunner: Git fetch error: \(errorString)")
-            }
-            
-            return false
-        } catch {
-            print("Failed to fetch repository: \(error)")
-            DispatchQueue.main.async { [weak self] in
-                self?.output += "Error: Failed to fetch repository: \(error.localizedDescription)\n"
-            }
-            return false
-        }
+    private func cloneRepositorySync(from source: URL, to destination: URL) -> Bool {
+        // Remove --depth 1 to get all branches (needed for branch checkout).
+        let result = runGitCommandSync(["clone", "file://\(source.path)", destination.path])
+        return result.success
     }
     
-    private func pullRepositorySync(in directory: URL) -> Bool {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        process.arguments = ["pull"]
-        process.currentDirectoryURL = directory
-        let outputPipe = Pipe()
-        let errorPipe = Pipe()
-        process.standardOutput = outputPipe
-        process.standardError = errorPipe
-        
-        // Set up output reading
-        let outputHandle = outputPipe.fileHandleForReading
-        outputHandle.readabilityHandler = { [weak self] handle in
-            let data = handle.availableData
-            if !data.isEmpty {
-                guard let string = String(data: data, encoding: .utf8) else { return }
-                DispatchQueue.main.async {
-                    self?.output += string
-                }
-            }
-        }
-        
-        let errorHandle = errorPipe.fileHandleForReading
-        errorHandle.readabilityHandler = { [weak self] handle in
-            let data = handle.availableData
-            if !data.isEmpty {
-                guard let string = String(data: data, encoding: .utf8) else { return }
-                DispatchQueue.main.async {
-                    self?.output += string
-                }
-            }
-        }
-        
+    private func fetchRepositorySync(in directory: URL) -> GitCommandResult {
+        runGitCommandSync(["fetch", "origin"], in: directory)
+    }
+    
+    private func recreateWorkspaceSync(from source: URL) -> Bool {
         do {
-            try process.run()
-            process.waitUntilExit()
-            
-            // Clean up handlers
-            outputHandle.readabilityHandler = nil
-            errorHandle.readabilityHandler = nil
-            
-            // Check if pull succeeded
-            if process.terminationStatus == 0 {
-                return true
+            if fileManager.fileExists(atPath: tempFolder.path) {
+                try fileManager.removeItem(at: tempFolder)
             }
-            
-            // If pull failed, read error output for debugging
-            let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
-            if let errorString = String(data: errorData, encoding: .utf8) {
-                print("TestRunner: Git pull error: \(errorString)")
-            }
-            
-            return false
-        } catch {
-            print("Failed to pull repository: \(error)")
+            try fileManager.createDirectory(at: tempFolder, withIntermediateDirectories: true)
             DispatchQueue.main.async { [weak self] in
-                self?.output += "Error: Failed to pull repository: \(error.localizedDescription)\n"
+                self?.output += "Recloning repository...\n"
+            }
+            return cloneRepositorySync(from: source, to: tempFolder)
+        } catch {
+            print("TestRunner: Failed to recreate workspace: \(error)")
+            DispatchQueue.main.async { [weak self] in
+                self?.output += "Error: Failed to recreate workspace: \(error.localizedDescription)\n"
             }
             return false
         }
     }
     
     private func checkoutAndResetBranchSync(_ branchName: String, in directory: URL) -> Bool {
-        // First, try to checkout the branch
-        let checkoutProcess = Process()
-        checkoutProcess.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        checkoutProcess.arguments = ["checkout", branchName]
-        checkoutProcess.currentDirectoryURL = directory
-        let checkoutOutputPipe = Pipe()
-        let checkoutErrorPipe = Pipe()
-        checkoutProcess.standardOutput = checkoutOutputPipe
-        checkoutProcess.standardError = checkoutErrorPipe
-        
-        // Set up output reading for checkout
-        let checkoutOutputHandle = checkoutOutputPipe.fileHandleForReading
-        checkoutOutputHandle.readabilityHandler = { [weak self] handle in
-            let data = handle.availableData
-            if !data.isEmpty {
-                guard let string = String(data: data, encoding: .utf8) else { return }
-                DispatchQueue.main.async {
-                    self?.output += string
-                }
-            }
-        }
-        
-        let checkoutErrorHandle = checkoutErrorPipe.fileHandleForReading
-        checkoutErrorHandle.readabilityHandler = { [weak self] handle in
-            let data = handle.availableData
-            if !data.isEmpty {
-                guard let string = String(data: data, encoding: .utf8) else { return }
-                DispatchQueue.main.async {
-                    self?.output += string
-                }
-            }
-        }
-        
-        do {
-            try checkoutProcess.run()
-            checkoutProcess.waitUntilExit()
-            
-            // Clean up handlers
-            checkoutOutputHandle.readabilityHandler = nil
-            checkoutErrorHandle.readabilityHandler = nil
-        } catch {
-            print("Failed to checkout branch: \(error)")
-            DispatchQueue.main.async { [weak self] in
-                self?.output += "Error: Failed to checkout branch: \(error.localizedDescription)\n"
-            }
+        // First, try to checkout the branch.
+        let checkoutResult = runGitCommandSync(["checkout", branchName], in: directory)
+        if !checkoutResult.success {
             return false
         }
         
@@ -488,178 +371,20 @@ class TestRunner: ObservableObject {
         }
     }
     
-    private func checkoutBranchSync(_ branchName: String, in directory: URL) -> Bool {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        process.arguments = ["checkout", branchName]
-        process.currentDirectoryURL = directory
-        let outputPipe = Pipe()
-        let errorPipe = Pipe()
-        process.standardOutput = outputPipe
-        process.standardError = errorPipe
-        
-        // Set up output reading
-        let outputHandle = outputPipe.fileHandleForReading
-        outputHandle.readabilityHandler = { [weak self] handle in
-            let data = handle.availableData
-            if !data.isEmpty {
-                guard let string = String(data: data, encoding: .utf8) else { return }
-                DispatchQueue.main.async {
-                    self?.output += string
-                }
-            }
-        }
-        
-        let errorHandle = errorPipe.fileHandleForReading
-        errorHandle.readabilityHandler = { [weak self] handle in
-            let data = handle.availableData
-            if !data.isEmpty {
-                guard let string = String(data: data, encoding: .utf8) else { return }
-                DispatchQueue.main.async {
-                    self?.output += string
-                }
-            }
-        }
-        
-        do {
-            try process.run()
-            process.waitUntilExit()
-            
-            // Clean up handlers
-            outputHandle.readabilityHandler = nil
-            errorHandle.readabilityHandler = nil
-            
-            if process.terminationStatus == 0 {
-                return true
-            }
-            
-            // If checkout failed, read error output for debugging
-            let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
-            if let errorString = String(data: errorData, encoding: .utf8) {
-                print("TestRunner: Git checkout error: \(errorString)")
-            }
-            
-            return false
-        } catch {
-            print("Failed to checkout branch: \(error)")
-            DispatchQueue.main.async { [weak self] in
-                self?.output += "Error: Failed to checkout branch: \(error.localizedDescription)\n"
-            }
-            return false
-        }
-    }
-    
     private func resetToRemoteBranch(_ branchName: String, in directory: URL) -> Bool {
-        // Check if remote branch exists
-        let checkProcess = Process()
-        checkProcess.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        checkProcess.arguments = ["show-ref", "--verify", "--quiet", "refs/remotes/origin/\(branchName)"]
-        checkProcess.currentDirectoryURL = directory
-        
-        do {
-            try checkProcess.run()
-            checkProcess.waitUntilExit()
-            
-            // If remote branch doesn't exist, just return true (local branch is fine)
-            if checkProcess.terminationStatus != 0 {
-                print("TestRunner: Remote branch 'origin/\(branchName)' does not exist, skipping reset")
-                return true
-            }
-        } catch {
-            print("Failed to check remote branch: \(error)")
-            // If we can't check, assume it exists and try to reset
-        }
-        
-        // Reset local branch to match remote
-        let resetProcess = Process()
-        resetProcess.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        resetProcess.arguments = ["reset", "--hard", "origin/\(branchName)"]
-        resetProcess.currentDirectoryURL = directory
-        let resetOutputPipe = Pipe()
-        let resetErrorPipe = Pipe()
-        resetProcess.standardOutput = resetOutputPipe
-        resetProcess.standardError = resetErrorPipe
-        
-        // Set up output reading for reset
-        let resetOutputHandle = resetOutputPipe.fileHandleForReading
-        resetOutputHandle.readabilityHandler = { [weak self] handle in
-            let data = handle.availableData
-            if !data.isEmpty {
-                guard let string = String(data: data, encoding: .utf8) else { return }
-                DispatchQueue.main.async {
-                    self?.output += string
-                }
-            }
-        }
-        
-        let resetErrorHandle = resetErrorPipe.fileHandleForReading
-        resetErrorHandle.readabilityHandler = { [weak self] handle in
-            let data = handle.availableData
-            if !data.isEmpty {
-                guard let string = String(data: data, encoding: .utf8) else { return }
-                DispatchQueue.main.async {
-                    self?.output += string
-                }
-            }
-        }
-        
-        do {
-            try resetProcess.run()
-            resetProcess.waitUntilExit()
-            
-            // Clean up handlers
-            resetOutputHandle.readabilityHandler = nil
-            resetErrorHandle.readabilityHandler = nil
-            
-            if resetProcess.terminationStatus == 0 {
-                return true
-            }
-            
-            let errorData = resetErrorPipe.fileHandleForReading.readDataToEndOfFile()
-            if let errorString = String(data: errorData, encoding: .utf8) {
-                print("TestRunner: Git reset error: \(errorString)")
-            }
-            
-            return false
-        } catch {
-            print("Failed to reset branch: \(error)")
-            return false
-        }
-    }
-    
-    private func ensureBranchTracksRemote(_ branchName: String, in directory: URL) -> Bool {
-        // Check if branch is tracking remote and if there are divergent commits
-        let statusProcess = Process()
-        statusProcess.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        statusProcess.arguments = ["status", "-sb"]
-        statusProcess.currentDirectoryURL = directory
-        let statusOutputPipe = Pipe()
-        statusProcess.standardOutput = statusOutputPipe
-        
-        do {
-            try statusProcess.run()
-            statusProcess.waitUntilExit()
-            
-            if statusProcess.terminationStatus == 0 {
-                let data = statusOutputPipe.fileHandleForReading.readDataToEndOfFile()
-                if let statusString = String(data: data, encoding: .utf8) {
-                    // Check if branch has diverged (contains "ahead" and "behind" or just "diverged")
-                    if statusString.contains("diverged") || (statusString.contains("ahead") && statusString.contains("behind")) {
-                        // Branch has diverged, reset to remote
-                        DispatchQueue.main.async {
-                            self.output += "Branch has diverged from remote. Resetting to match remote...\n"
-                        }
-                        print("TestRunner: Branch has diverged, resetting to remote")
-                        return resetToRemoteBranch(branchName, in: directory)
-                    }
-                }
-            }
-            
+        // Check if remote branch exists.
+        let checkResult = runGitCommandSync(
+            ["show-ref", "--verify", "--quiet", "refs/remotes/origin/\(branchName)"],
+            in: directory
+        )
+        if !checkResult.success {
+            print("TestRunner: Remote branch 'origin/\(branchName)' does not exist, skipping reset")
             return true
-        } catch {
-            print("Failed to check branch status: \(error)")
-            return false
         }
+        
+        // Reset local branch to match remote.
+        let resetResult = runGitCommandSync(["reset", "--hard", "origin/\(branchName)"], in: directory)
+        return resetResult.success
     }
     
     private func runXcodebuildTests(workspaceURL: URL, testRun: TestRun) {
