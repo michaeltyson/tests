@@ -12,6 +12,7 @@ struct TestHistoryView: View {
     @ObservedObject var testResultStore: TestResultStore
     @ObservedObject var testRunner: TestRunner
     @State private var selectedTestRun: TestRun?
+    @State private var runningPlaceholderTestRun: TestRun?
     @State private var sidebarWidth: CGFloat = {
         let saved = UserDefaults.standard.double(forKey: "TestHistorySidebarWidth")
         return saved > 0 ? saved : 280
@@ -23,6 +24,8 @@ struct TestHistoryView: View {
         if let currentTestRun = testRunner.currentTestRun {
             runs.removeAll { $0.id == currentTestRun.id }
             runs.insert(currentTestRun, at: 0)
+        } else if testRunner.isRunning, let placeholder = runningPlaceholderTestRun {
+            runs.insert(placeholder, at: 0)
         }
         
         return runs
@@ -205,8 +208,19 @@ struct TestHistoryView: View {
         .onChange(of: testRunner.currentTestRun) { _, newTestRun in
             // Auto-select the running test only if nothing is currently selected
             if let newTestRun = newTestRun, selectedTestRun == nil {
+                runningPlaceholderTestRun = nil
                 selectedTestRun = newTestRun
             } else if newTestRun == nil {
+                if testRunner.isRunning {
+                    if runningPlaceholderTestRun == nil {
+                        runningPlaceholderTestRun = TestRun(status: .running)
+                    }
+                    if selectedTestRun == nil, let placeholder = runningPlaceholderTestRun {
+                        selectedTestRun = placeholder
+                    }
+                    return
+                }
+                
                 // Test run cleared (e.g., cancelled) - deselect if it was the selected one
                 if selectedTestRun?.id == testRunner.currentTestRun?.id {
                     selectedTestRun = nil
@@ -214,8 +228,16 @@ struct TestHistoryView: View {
             }
         }
         .onChange(of: testRunner.isRunning) { _, isRunning in
+            if isRunning && testRunner.currentTestRun == nil {
+                runningPlaceholderTestRun = TestRun(status: .running)
+                if selectedTestRun == nil, let placeholder = runningPlaceholderTestRun {
+                    selectedTestRun = placeholder
+                }
+            }
+            
             // When test stops running (including cancellation), clear selection if it was the current run
             if !isRunning {
+                runningPlaceholderTestRun = nil
                 if testRunner.currentTestRun == nil {
                     // Test was cancelled - clear selection if it was the cancelled test
                     selectedTestRun = nil
