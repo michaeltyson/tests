@@ -110,6 +110,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             menuBarManager?.failingCount = failingCount
             menuBarManager?.updateMenuItems()
         }.store(in: &cancellables)
+
+        testRunner.$queuedRunCount.sink { [weak menuBarManager] queuedRunCount in
+            menuBarManager?.queuedRunCount = queuedRunCount
+            menuBarManager?.updateMenuItems()
+        }.store(in: &cancellables)
         
         testRunner.$currentTestRun.sink { [weak self, weak menuBarManager] testRun in
             if let testRun = testRun {
@@ -274,6 +279,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
     
     @objc func showBranchSelectionWindow() {
+        // Force branch list refresh each time the picker is opened.
+        NotificationCenter.default.post(name: NSNotification.Name("RefreshBranchList"), object: nil)
+
         if let window = branchSelectionWindow {
             window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
@@ -400,4 +408,3 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 }
-

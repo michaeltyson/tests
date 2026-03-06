@@ -76,6 +76,20 @@ targets:
           # Remove TestsCLI from Resources (it should only be in MacOS)
           rm -f "${BUILT_PRODUCTS_DIR}/Tests.app/Contents/Resources/TestsCLI"
 
+  TestsUnitTests:
+    type: bundle.unit-test
+    platform: macOS
+    deploymentTarget: "15.0"
+    sources:
+      - path: TestsUnitTests
+    dependencies:
+      - target: Tests
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.atastypixel.TestsUnitTests
+      GENERATE_INFOPLIST_FILE: YES
+      SWIFT_VERSION: "5.0"
+      MACOSX_DEPLOYMENT_TARGET: "15.0"
+
 schemes:
   Tests:
     build:
@@ -90,4 +104,12 @@ schemes:
         TestsCLI: all
     run:
       config: Debug
-
+  TestsUnitTests:
+    build:
+      targets:
+        Tests: all
+        TestsCLI: all
+        TestsUnitTests: all
+    test:
+      targets:
+        - TestsUnitTests

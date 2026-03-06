@@ -17,6 +17,7 @@ class MenuBarManager: ObservableObject {
     @Published var failingCount: Int = 0
     @Published var passingCount: Int = 0
     @Published var totalCount: Int = 0
+    @Published var queuedRunCount: Int = 0
     @Published var reportsWindowOpen = false
     
     private var statusItem: NSStatusItem?
@@ -274,14 +275,15 @@ class MenuBarManager: ObservableObject {
             let currentCount = passingCount + failingCount
             let progress: Double
             let statusText: String
+            let queueText = queuedRunCount > 0 ? " (\(queuedRunCount) queued)" : ""
             
             if isBuilding {
                 // Building phase - show indeterminate progress
-                statusText = "Building"
+                statusText = "Building\(queueText)"
                 progress = 0.0
             } else {
                 // Test phase - show actual progress
-                statusText = "Running"
+                statusText = "Running\(queueText)"
                 if totalCount > 0 {
                     progress = Double(currentCount) / Double(totalCount)
                 } else {
@@ -447,4 +449,3 @@ struct MenuBarView: View {
         EmptyView()
     }
 }
-

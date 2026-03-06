@@ -17,7 +17,7 @@ struct TestProgressView: View {
                 if testRunner.isRunning {
                     ProgressView()
                         .scaleEffect(0.8)
-                    Text("Running tests...")
+                    Text(testRunner.queuedRunCount > 0 ? "Running tests... (\(testRunner.queuedRunCount) queued)" : "Running tests...")
                         .font(.headline)
                 } else if testRunner.isPaused {
                     Image(systemName: "pause.circle.fill")
@@ -43,4 +43,3 @@ struct TestProgressView: View {
         .frame(minWidth: 800, minHeight: 500)
     }
 }
-

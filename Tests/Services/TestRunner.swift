@@ -14,6 +14,7 @@ class TestRunner: ObservableObject {
     @Published var isRunning = false
     @Published var isPaused = false
     @Published var isBuilding = false
+    @Published var queuedRunCount = 0
     @Published var currentTestRun: TestRun?
     @Published var output: String = ""
     @Published var passingCount: Int = 0
@@ -32,15 +33,35 @@ class TestRunner: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     private var isCancelled = false
     private let setupQueue = DispatchQueue(label: "com.atastypixel.Tests.setupQueue", qos: .userInitiated)
+    private var pendingRuns: [PendingRunRequest] = []
+    private var activeBranchName: String?
     
-    private let tempFolder: URL
+    private let tempRootFolder: URL
     private let fileManager = FileManager.default
     
     private static let totalCountKey = "com.atastypixel.Tests.lastTotalCount"
+
+    private struct PendingRunRequest {
+        let branchName: String
+        let isManualRun: Bool
+    }
+
+    enum RunDispatchAction: Equatable {
+        case startNow
+        case queued
+        case queuedAndCancelActive
+    }
     
     init() {
         let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        tempFolder = appSupport.appendingPathComponent("Tests/TempWorkspace", isDirectory: true)
+        tempRootFolder = appSupport.appendingPathComponent("Tests/TempWorkspace", isDirectory: true)
+    }
+    
+    private func workspaceFolder(for branchName: String) -> URL {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "._-"))
+        let sanitizedScalars = branchName.unicodeScalars.map { allowed.contains($0) ? Character($0) : "_" }
+        let sanitized = String(sanitizedScalars)
+        return tempRootFolder.appendingPathComponent(sanitized, isDirectory: true)
     }
     
     func runTests(branchName: String? = nil, isManualRun: Bool = false) {
@@ -51,16 +72,7 @@ class TestRunner: ObservableObject {
             print("TestRunner: Tests are paused, ignoring run request")
             return
         }
-        
-        // If already running, kill current process and start new one
-        if isRunning {
-            print("TestRunner: Test already running, killing current process")
-            killCurrentProcess()
-        }
-        
-        // Reset cancellation flag when starting new tests
-        isCancelled = false
-        
+
         let settings = SettingsStore.shared
         
         // Repository path is required
@@ -70,55 +82,41 @@ class TestRunner: ObservableObject {
             return
         }
         
-        // Determine which branch to use: notification branch > settings branch > "develop"
-        // Trim any leading "+" or whitespace that might have been accidentally included
-        var branchToUse = branchName ?? settings.branchName ?? "develop"
-        branchToUse = branchToUse.trimmingCharacters(in: .whitespaces)
-        if branchToUse.hasPrefix("+") {
-            branchToUse = String(branchToUse.dropFirst()).trimmingCharacters(in: .whitespaces)
+        // Determine which branch to use: notification branch > settings branch > "develop".
+        let branchToUse = resolvedBranchName(for: branchName, defaultBranch: settings.branchName)
+
+        switch dispatchIncomingRun(branchName: branchToUse, isManualRun: isManualRun) {
+        case .startNow:
+            break
+        case .queued:
+            return
+        case .queuedAndCancelActive:
+            cancelActiveRunForQueueReplacement()
+            return
         }
-        
+
+        // Reset cancellation flag when starting new tests
+        isCancelled = false
+        activeBranchName = branchToUse
+
         print("TestRunner: Using repository path: \(settings.repositoryPath)")
         print("TestRunner: Using branch: \(branchToUse)")
         let repositoryRoot = URL(fileURLWithPath: settings.repositoryPath)
-        
-        // Set running state and initialize output immediately so UI shows progress
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            self.isRunning = true
-            self.output = ""
-            
-            // Load total count from UserDefaults (from previous run)
-            let savedTotalCount = UserDefaults.standard.integer(forKey: Self.totalCountKey)
-            if savedTotalCount > 0 {
-                self.totalCount = savedTotalCount
-            }
-            
-            // Reset counts for new run
-            self.passingCount = 0
-            self.failingCount = 0
-            self.passedTestNames.removeAll()
-            self.failedTestNames.removeAll()
-            self.isBuilding = true // Start in building phase
-            
-            var testRun = TestRun(status: .running)
-            testRun.totalCount = savedTotalCount > 0 ? savedTotalCount : nil
-            testRun.branchName = branchToUse
-            self.currentTestRun = testRun
-            
-            // Send notification that tests have started
-            self.sendTestStartNotification(branchName: branchToUse)
-        }
+        let branchWorkspace = workspaceFolder(for: branchToUse)
+
+        prepareForRunStart()
         
         // Move all setup work to a serial background queue to avoid overlapping git operations.
         setupQueue.async { [weak self] in
             guard let self = self else { return }
+
+            if self.shouldStopBeforeLaunchingProcess() { return }
             
             // Verify repository path exists
             guard self.fileManager.fileExists(atPath: repositoryRoot.path) else {
                 print("TestRunner: ERROR - Repository path does not exist: \(repositoryRoot.path)")
-                self.showError("Repository path not found", message: "The configured repository path does not exist. Please check Settings.")
                 self.abortRun(removeCurrentRun: true)
+                self.showError("Repository path not found", message: "The configured repository path does not exist. Please check Settings.")
                 return
             }
             
@@ -127,24 +125,28 @@ class TestRunner: ObservableObject {
                 self.output += "Preparing workspace...\n"
             }
             do {
-                try self.fileManager.createDirectory(at: self.tempFolder, withIntermediateDirectories: true)
-                print("TestRunner: Temp folder ready: \(self.tempFolder.path)")
+                try self.fileManager.createDirectory(at: self.tempRootFolder, withIntermediateDirectories: true)
+                try self.fileManager.createDirectory(at: branchWorkspace, withIntermediateDirectories: true)
+                print("TestRunner: Temp root ready: \(self.tempRootFolder.path)")
+                print("TestRunner: Branch workspace ready: \(branchWorkspace.path)")
             } catch {
                 print("TestRunner: ERROR - Failed to create temp folder: \(error)")
-                self.showError("Failed to create temp folder", message: error.localizedDescription)
                 self.abortRun(removeCurrentRun: true)
+                self.showError("Failed to create temp folder", message: error.localizedDescription)
                 return
             }
+
+            if self.shouldStopBeforeLaunchingProcess() { return }
             
             // Clone or update repository (synchronous on background thread)
-            if !self.fileManager.fileExists(atPath: self.tempFolder.appendingPathComponent(".git").path) {
+            if !self.fileManager.fileExists(atPath: branchWorkspace.appendingPathComponent(".git").path) {
                 DispatchQueue.main.async {
                     self.output += "Cloning repository...\n"
                 }
                 print("TestRunner: Cloning repository...")
-                if !self.cloneRepositorySync(from: repositoryRoot, to: self.tempFolder) {
-                    self.showError("Failed to clone repository", message: "Could not clone repository into the temp workspace.")
+                if !self.cloneRepositorySync(from: repositoryRoot, to: branchWorkspace) {
                     self.abortRun(removeCurrentRun: true)
+                    self.showError("Failed to clone repository", message: "Could not clone repository into the temp workspace.")
                     return
                 }
             } else {
@@ -153,54 +155,60 @@ class TestRunner: ObservableObject {
                     self.output += "Fetching repository updates...\n"
                 }
                 print("TestRunner: Fetching repository updates...")
-                let fetchResult = self.fetchRepositorySync(in: self.tempFolder)
+                let fetchResult = self.fetchRepositorySync(in: branchWorkspace)
                 if !fetchResult.success {
                     print("TestRunner: Fetch failed, rebuilding workspace and retrying")
                     DispatchQueue.main.async {
                         self.output += "Fetch failed. Recreating workspace and retrying...\n"
                     }
-                    if !self.recreateWorkspaceSync(from: repositoryRoot) {
+                    if !self.recreateWorkspaceSync(from: repositoryRoot, to: branchWorkspace) {
                         let detail = fetchResult.output.isEmpty ? "No additional git output available." : fetchResult.output
+                        self.abortRun(removeCurrentRun: true)
                         self.showError(
                             "Failed to fetch repository",
                             message: "Could not fetch repository updates.\n\nGit output:\n\(detail)"
                         )
-                        self.abortRun(removeCurrentRun: true)
                         return
                     }
                 }
             }
+
+            if self.shouldStopBeforeLaunchingProcess() { return }
             
             // Checkout branch and reset to match remote (handles divergent branches)
             DispatchQueue.main.async {
                 self.output += "Checking out branch '\(branchToUse)'...\n"
             }
             print("TestRunner: Checking out branch: \(branchToUse)")
-            if !self.checkoutAndResetBranchSync(branchToUse, in: self.tempFolder) {
-                self.showError("Failed to checkout branch", message: "Could not checkout branch '\(branchToUse)'. Please verify the branch exists.")
+            if !self.checkoutAndResetBranchSync(branchToUse, in: branchWorkspace) {
                 self.abortRun(removeCurrentRun: true)
+                self.showError("Failed to checkout branch", message: "Could not checkout branch '\(branchToUse)'. Please verify the branch exists.")
                 return
             }
+
+            if self.shouldStopBeforeLaunchingProcess() { return }
             
             // Find workspace file within the cloned repository
             DispatchQueue.main.async {
                 self.output += "Finding workspace...\n"
             }
-            print("TestRunner: Searching for workspace file in: \(self.tempFolder.path)")
-            guard let workspaceURL = WorkspaceFinder.findWorkspace(in: self.tempFolder) else {
+            print("TestRunner: Searching for workspace file in: \(branchWorkspace.path)")
+            guard let workspaceURL = WorkspaceFinder.findWorkspace(in: branchWorkspace) else {
                 print("TestRunner: ERROR - Could not find .xcworkspace file in repository root")
-                self.showError("Workspace not found", message: "Could not find .xcworkspace file in repository root. Please check the repository path in Settings.")
                 self.abortRun(removeCurrentRun: true)
+                self.showError("Workspace not found", message: "Could not find .xcworkspace file in repository root. Please check the repository path in Settings.")
                 return
             }
             
             print("TestRunner: Found workspace: \(workspaceURL.path)")
+
+            if self.shouldStopBeforeLaunchingProcess() { return }
             
             // Run tests on main thread
             DispatchQueue.main.async {
-                self.output += "Starting tests...\n\n"
-                print("TestRunner: Starting xcodebuild tests...")
-                self.runXcodebuildTests(workspaceURL: workspaceURL, testRun: self.currentTestRun!)
+                self.output += "Starting build...\n\n"
+                print("TestRunner: Starting xcodebuild build+test pipeline...")
+                self.runXcodebuildTests(workspaceURL: workspaceURL, branchName: branchToUse, workspaceDirectory: branchWorkspace)
             }
         }
     }
@@ -231,6 +239,8 @@ class TestRunner: ObservableObject {
     func cancel() {
         print("TestRunner: Canceling tests")
         isCancelled = true
+        pendingRuns.removeAll()
+        queuedRunCount = 0
         
         // Delete the test run from history if it was already saved
         if let testRun = currentTestRun {
@@ -254,13 +264,22 @@ class TestRunner: ObservableObject {
     }
     
     private func killCurrentProcess() {
-        guard let process = process else { return }
-        process.terminate()
-        // Don't wait synchronously - let it terminate in background
-        DispatchQueue.global(qos: .utility).async {
-            process.waitUntilExit()
+        if let process = process {
+            process.terminate()
+            // Don't wait synchronously - let it terminate in background
+            DispatchQueue.global(qos: .utility).async {
+                process.waitUntilExit()
+            }
         }
+        if let xcodebuildProcess = xcodebuildProcess {
+            xcodebuildProcess.terminate()
+            DispatchQueue.global(qos: .utility).async {
+                xcodebuildProcess.waitUntilExit()
+            }
+        }
+        // Don't wait synchronously - let it terminate in background
         self.process = nil
+        self.xcodebuildProcess = nil
         outputHandle?.readabilityHandler = nil
         errorHandle?.readabilityHandler = nil
         outputHandle = nil
@@ -329,16 +348,16 @@ class TestRunner: ObservableObject {
         runGitCommandSync(["fetch", "origin"], in: directory)
     }
     
-    private func recreateWorkspaceSync(from source: URL) -> Bool {
+    private func recreateWorkspaceSync(from source: URL, to destination: URL) -> Bool {
         do {
-            if fileManager.fileExists(atPath: tempFolder.path) {
-                try fileManager.removeItem(at: tempFolder)
+            if fileManager.fileExists(atPath: destination.path) {
+                try fileManager.removeItem(at: destination)
             }
-            try fileManager.createDirectory(at: tempFolder, withIntermediateDirectories: true)
+            try fileManager.createDirectory(at: destination, withIntermediateDirectories: true)
             DispatchQueue.main.async { [weak self] in
                 self?.output += "Recloning repository...\n"
             }
-            return cloneRepositorySync(from: source, to: tempFolder)
+            return cloneRepositorySync(from: source, to: destination)
         } catch {
             print("TestRunner: Failed to recreate workspace: \(error)")
             DispatchQueue.main.async { [weak self] in
@@ -363,11 +382,13 @@ class TestRunner: ObservableObject {
         DispatchQueue.main.async {
             self.isRunning = false
             self.isBuilding = false
+            self.activeBranchName = nil
             
             if removeCurrentRun, let currentRun = self.currentTestRun {
                 NotificationCenter.default.post(name: NSNotification.Name("DeleteTestRun"), object: currentRun)
                 self.currentTestRun = nil
             }
+            self.startNextQueuedRunIfNeeded()
         }
     }
     
@@ -387,8 +408,29 @@ class TestRunner: ObservableObject {
         return resetResult.success
     }
     
-    private func runXcodebuildTests(workspaceURL: URL, testRun: TestRun) {
+    private func runXcodebuildTests(workspaceURL: URL, branchName: String, workspaceDirectory: URL) {
+        if isCancelled {
+            print("TestRunner: Run was canceled before xcodebuild launch")
+            isCancelled = false
+            abortRun(removeCurrentRun: true)
+            return
+        }
+
         // isRunning and output are already set in runTests()
+        if currentTestRun == nil {
+            var testRun = TestRun(status: .running)
+            testRun.totalCount = totalCount > 0 ? totalCount : nil
+            testRun.branchName = branchName
+            currentTestRun = testRun
+            sendTestStartNotification(branchName: branchName)
+        }
+
+        let escapedWorkspacePath = shellEscape(workspaceURL.path)
+        let escapedScheme = shellEscape("Loopy Pro (macOS)")
+        let escapedDestination = shellEscape("platform=macOS,arch=arm64")
+        let xcodebuildCommand = """
+        /usr/bin/xcodebuild -workspace \(escapedWorkspacePath) -scheme \(escapedScheme) -destination \(escapedDestination) build-for-testing && /usr/bin/xcodebuild -workspace \(escapedWorkspacePath) -scheme \(escapedScheme) -destination \(escapedDestination) test-without-building
+        """
         
         // Check if xcbeautify is available
         let xcbeautifyPaths = ["/usr/local/bin/xcbeautify", "/opt/homebrew/bin/xcbeautify"]
@@ -400,16 +442,12 @@ class TestRunner: ObservableObject {
             }
         }
         
-        // Create xcodebuild process
+        // Run build and test in a fail-fast shell pipeline:
+        // test-without-building only runs if build-for-testing succeeds.
         let xcodebuildProcess = Process()
-        xcodebuildProcess.executableURL = URL(fileURLWithPath: "/usr/bin/xcodebuild")
-        xcodebuildProcess.arguments = [
-            "-workspace", workspaceURL.path,
-            "-scheme", "Loopy Pro (macOS)",
-            "-destination", "platform=macOS,arch=arm64",
-            "test"
-        ]
-        xcodebuildProcess.currentDirectoryURL = tempFolder
+        xcodebuildProcess.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        xcodebuildProcess.arguments = ["-lc", xcodebuildCommand]
+        xcodebuildProcess.currentDirectoryURL = workspaceDirectory
         
         // Set up environment with NSUnbufferedIO for real-time output
         var environment = ProcessInfo.processInfo.environment
@@ -547,6 +585,7 @@ class TestRunner: ObservableObject {
                     testRun.errorDescription = "Failed to create process"
                     self.currentTestRun = testRun
                 }
+                self.startNextQueuedRunIfNeeded()
             }
             return
         }
@@ -583,6 +622,7 @@ class TestRunner: ObservableObject {
                 self.isBuilding = false
                 self.process = nil
                 self.xcodebuildProcess = nil
+                self.activeBranchName = nil
                 self.outputHandle = nil
                 self.errorHandle = nil
                 
@@ -590,6 +630,7 @@ class TestRunner: ObservableObject {
                 if self.isCancelled {
                     self.isCancelled = false
                     self.currentTestRun = nil
+                    self.startNextQueuedRunIfNeeded()
                     return
                 }
                 
@@ -622,7 +663,7 @@ class TestRunner: ObservableObject {
                         testRun.errorDescription = self.extractError(from: finalOutput)
                     } else if finalOutput.contains("** BUILD FAILED **") || finalOutput.contains("BUILD FAILED") {
                         testRun.status = .error
-                    } else if self.failingCount > 0 || finalOutput.contains("** TEST FAILED **") || finalOutput.contains("TEST FAILED") || finalOutput.contains("failed") {
+                    } else if self.failingCount > 0 || self.outputContainsRealTestFailure(finalOutput) {
                         testRun.status = .failed
                     } else if finalOutput.contains("warning:") || finalOutput.contains("⚠️") {
                         testRun.status = .warnings
@@ -638,6 +679,7 @@ class TestRunner: ObservableObject {
                     // Send notification that tests have completed
                     self.sendTestCompletionNotification(testRun: testRun)
                 }
+                self.startNextQueuedRunIfNeeded()
             }
         }
         
@@ -659,13 +701,107 @@ class TestRunner: ObservableObject {
         } catch {
             DispatchQueue.main.async {
                 self.isRunning = false
+                self.activeBranchName = nil
                 if var testRun = self.currentTestRun {
                     testRun.status = .error
                     testRun.errorDescription = error.localizedDescription
                     self.currentTestRun = testRun
                 }
+                self.startNextQueuedRunIfNeeded()
             }
         }
+    }
+
+    private func prepareForRunStart() {
+        isRunning = true
+        output = ""
+
+        // Load total count from UserDefaults (from previous run)
+        let savedTotalCount = UserDefaults.standard.integer(forKey: Self.totalCountKey)
+        if savedTotalCount > 0 {
+            totalCount = savedTotalCount
+        }
+
+        // Reset counts for new run
+        passingCount = 0
+        failingCount = 0
+        passedTestNames.removeAll()
+        failedTestNames.removeAll()
+        isBuilding = true // Start in building phase
+        currentTestRun = nil
+    }
+
+    private func startNextQueuedRunIfNeeded() {
+        guard !isRunning, !pendingRuns.isEmpty else { return }
+        let nextRequest = pendingRuns.removeFirst()
+        queuedRunCount = pendingRuns.count
+        runTests(branchName: nextRequest.branchName, isManualRun: nextRequest.isManualRun)
+    }
+
+    private func resolvedBranchName(for requestedBranch: String?, defaultBranch: String?) -> String {
+        var branchToUse = requestedBranch ?? defaultBranch ?? "develop"
+        branchToUse = branchToUse.trimmingCharacters(in: .whitespaces)
+        if branchToUse.hasPrefix("+") {
+            branchToUse = String(branchToUse.dropFirst()).trimmingCharacters(in: .whitespaces)
+        }
+        return branchToUse
+    }
+
+    private func enqueuePendingRun(branchName: String, isManualRun: Bool) {
+        if let existingIndex = pendingRuns.firstIndex(where: { $0.branchName == branchName }) {
+            let existing = pendingRuns[existingIndex]
+            pendingRuns[existingIndex] = PendingRunRequest(
+                branchName: branchName,
+                isManualRun: existing.isManualRun || isManualRun
+            )
+            queuedRunCount = pendingRuns.count
+            print("TestRunner: Deduped queued request for branch '\(branchName)'")
+            return
+        }
+        
+        pendingRuns.append(PendingRunRequest(branchName: branchName, isManualRun: isManualRun))
+        queuedRunCount = pendingRuns.count
+        print("TestRunner: Queued request for branch '\(branchName)' (queue size: \(pendingRuns.count))")
+    }
+
+    @discardableResult
+    func dispatchIncomingRun(branchName: String, isManualRun: Bool) -> RunDispatchAction {
+        guard isRunning else {
+            return .startNow
+        }
+
+        enqueuePendingRun(branchName: branchName, isManualRun: isManualRun)
+        let runningBranch = activeBranchName ?? currentTestRun?.branchName
+        if runningBranch == branchName {
+            print("TestRunner: Queued request matches active branch '\(branchName)', canceling active run to prioritize newest commit")
+            return .queuedAndCancelActive
+        } else {
+            print("TestRunner: Active branch '\(runningBranch ?? "unknown")' differs, keeping current run and queueing branch '\(branchName)'")
+            return .queued
+        }
+    }
+
+    var queuedRunBranchesForTesting: [String] {
+        pendingRuns.map(\.branchName)
+    }
+
+    private func cancelActiveRunForQueueReplacement() {
+        guard !isCancelled else { return }
+        isCancelled = true
+        
+        if let testRun = currentTestRun {
+            NotificationCenter.default.post(name: NSNotification.Name("DeleteTestRun"), object: testRun)
+        }
+        
+        killCurrentProcess()
+    }
+
+    private func shouldStopBeforeLaunchingProcess() -> Bool {
+        guard isCancelled else { return false }
+        print("TestRunner: Aborting run before process launch due to cancellation/superseded trigger")
+        isCancelled = false
+        abortRun(removeCurrentRun: true)
+        return true
     }
     
     private func extractError(from output: String) -> String? {
@@ -683,6 +819,24 @@ class TestRunner: ObservableObject {
             }
         }
         return nil
+    }
+
+    private func outputContainsRealTestFailure(_ output: String) -> Bool {
+        if output.contains("** TEST FAILED **") || output.contains("TEST FAILED") {
+            return true
+        }
+
+        // Avoid false positives from summaries like "0 failed".
+        let pattern = #"\b([1-9]\d*)\s+failed\b"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
+            return false
+        }
+        let range = NSRange(output.startIndex..., in: output)
+        return regex.firstMatch(in: output, options: [], range: range) != nil
+    }
+    
+    private func shellEscape(_ value: String) -> String {
+        "'\(value.replacingOccurrences(of: "'", with: "'\\''"))'"
     }
     
     private func detectPhase(_ output: String) {

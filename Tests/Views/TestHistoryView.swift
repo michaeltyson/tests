@@ -17,11 +17,22 @@ struct TestHistoryView: View {
         return saved > 0 ? saved : 280
     }()
     
+    private var sidebarTestRuns: [TestRun] {
+        var runs = testResultStore.testRuns
+        
+        if let currentTestRun = testRunner.currentTestRun {
+            runs.removeAll { $0.id == currentTestRun.id }
+            runs.insert(currentTestRun, at: 0)
+        }
+        
+        return runs
+    }
+    
     var body: some View {
         HSplitView {
             // List view with translucent background
             VStack(spacing: 0) {
-                List(testResultStore.testRuns, selection: $selectedTestRun) { testRun in
+                List(sidebarTestRuns, selection: $selectedTestRun) { testRun in
                     TestRunRow(
                         testRun: testRun,
                         isCurrentRun: testRunner.currentTestRun?.id == testRun.id,
@@ -69,7 +80,11 @@ struct TestHistoryView: View {
                         HStack(spacing: 10) {
                             ProgressView()
                                 .controlSize(.small)
-                            Text(testRunner.isBuilding ? "Building..." : "Running tests...")
+                            Text(
+                                testRunner.isBuilding
+                                    ? (testRunner.queuedRunCount > 0 ? "Building... (\(testRunner.queuedRunCount) queued)" : "Building...")
+                                    : (testRunner.queuedRunCount > 0 ? "Running tests... (\(testRunner.queuedRunCount) queued)" : "Running tests...")
+                            )
                                 .font(.system(size: 15, weight: .medium))
                         }
                         
@@ -498,4 +513,3 @@ struct SplitViewDividerController: NSViewRepresentable {
         }
     }
 }
-
