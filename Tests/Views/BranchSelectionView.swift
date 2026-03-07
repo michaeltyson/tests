@@ -65,7 +65,6 @@ struct BranchSelectionView: View {
                     }
                     .onAppear {
                         isTextFieldFocused = true
-                        loadBranches()
                     }
                 
                 // Dropdown list
@@ -134,6 +133,12 @@ struct BranchSelectionView: View {
         }
         .padding()
         .frame(width: 500, height: 400)
+        .onAppear {
+            loadBranches()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("RefreshBranchList"))) { _ in
+            loadBranches()
+        }
     }
     
     private func loadBranches() {
@@ -214,4 +219,3 @@ struct BranchSelectionView: View {
         }
     }
 }
-
