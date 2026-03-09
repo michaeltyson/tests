@@ -77,20 +77,6 @@ struct BranchSelectionView: View {
                         }
                         return .handled
                     }
-                    .onKeyPress("v", phases: .down) { keyPress in
-                        guard keyPress.modifiers.contains(.command) else {
-                            return .ignored
-                        }
-                        pasteFromClipboard()
-                        return .handled
-                    }
-                    .onKeyPress("V", phases: .down) { keyPress in
-                        guard keyPress.modifiers.contains(.command) else {
-                            return .ignored
-                        }
-                        pasteFromClipboard()
-                        return .handled
-                    }
                     .onAppear {
                         isTextFieldFocused = true
                     }
@@ -286,10 +272,5 @@ struct BranchSelectionView: View {
         }
 
         filteredRefs = branchMatches + commitMatches
-    }
-
-    private func pasteFromClipboard() {
-        guard let text = NSPasteboard.general.string(forType: .string) else { return }
-        branchName = text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
