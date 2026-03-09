@@ -57,11 +57,8 @@ class TestRunner: ObservableObject {
         tempRootFolder = appSupport.appendingPathComponent("Tests/TempWorkspace", isDirectory: true)
     }
     
-    private func workspaceFolder(for branchName: String) -> URL {
-        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "._-"))
-        let sanitizedScalars = branchName.unicodeScalars.map { allowed.contains($0) ? Character($0) : "_" }
-        let sanitized = String(sanitizedScalars)
-        return tempRootFolder.appendingPathComponent(sanitized, isDirectory: true)
+    private func workspaceFolder() -> URL {
+        tempRootFolder.appendingPathComponent("workspace", isDirectory: true)
     }
     
     func runTests(branchName: String? = nil, isManualRun: Bool = false) {
@@ -102,7 +99,7 @@ class TestRunner: ObservableObject {
         print("TestRunner: Using repository path: \(settings.repositoryPath)")
         print("TestRunner: Using branch: \(branchToUse)")
         let repositoryRoot = URL(fileURLWithPath: settings.repositoryPath)
-        let branchWorkspace = workspaceFolder(for: branchToUse)
+        let branchWorkspace = workspaceFolder()
 
         prepareForRunStart()
         
@@ -127,6 +124,7 @@ class TestRunner: ObservableObject {
             do {
                 try self.fileManager.createDirectory(at: self.tempRootFolder, withIntermediateDirectories: true)
                 try self.fileManager.createDirectory(at: branchWorkspace, withIntermediateDirectories: true)
+                self.cleanupLegacyBranchWorkspacesSync(keeping: branchWorkspace)
                 print("TestRunner: Temp root ready: \(self.tempRootFolder.path)")
                 print("TestRunner: Branch workspace ready: \(branchWorkspace.path)")
             } catch {
@@ -368,6 +366,33 @@ class TestRunner: ObservableObject {
                 self?.output += "Error: Failed to recreate workspace: \(error.localizedDescription)\n"
             }
             return false
+        }
+    }
+
+    private func cleanupLegacyBranchWorkspacesSync(keeping currentWorkspace: URL) {
+        do {
+            let contents = try fileManager.contentsOfDirectory(
+                at: tempRootFolder,
+                includingPropertiesForKeys: [.isDirectoryKey],
+                options: [.skipsHiddenFiles]
+            )
+
+            for item in contents where item.path != currentWorkspace.path {
+                let values = try item.resourceValues(forKeys: [.isDirectoryKey])
+                guard values.isDirectory == true else { continue }
+
+                do {
+                    try fileManager.removeItem(at: item)
+                    print("TestRunner: Removed legacy workspace: \(item.path)")
+                    DispatchQueue.main.async { [weak self] in
+                        self?.output += "Removed old workspace '\(item.lastPathComponent)'.\n"
+                    }
+                } catch {
+                    print("TestRunner: Failed to remove legacy workspace \(item.path): \(error)")
+                }
+            }
+        } catch {
+            print("TestRunner: Failed to inspect temp workspace contents: \(error)")
         }
     }
     
