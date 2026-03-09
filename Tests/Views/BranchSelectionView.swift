@@ -9,10 +9,24 @@ import SwiftUI
 import AppKit
 
 struct BranchSelectionView: View {
+    private struct RefSuggestion: Identifiable {
+        enum Kind {
+            case branch
+            case commit
+        }
+
+        let kind: Kind
+        let ref: String
+        let title: String
+        let subtitle: String?
+
+        var id: String { "\(kind)-\(ref)" }
+    }
+
     @ObservedObject var settings = SettingsStore.shared
     @State private var branchName: String = ""
-    @State private var availableBranches: [String] = []
-    @State private var filteredBranches: [String] = []
+    @State private var availableRefs: [RefSuggestion] = []
+    @State private var filteredRefs: [RefSuggestion] = []
     @State private var isLoading = false
     @State private var selectedIndex: Int = -1
     @FocusState private var isTextFieldFocused: Bool
@@ -25,23 +39,23 @@ struct BranchSelectionView: View {
                 .font(.title2)
                 .fontWeight(.semibold)
             
-            Text("Choose a branch to test:")
+            Text("Choose a branch or commit to test:")
                 .font(.subheadline)
                 .foregroundColor(.secondary)
             
             VStack(alignment: .leading, spacing: 8) {
-                TextField("Branch name", text: $branchName)
+                TextField("Branch, commit SHA, or message", text: $branchName)
                     .textFieldStyle(.roundedBorder)
                     .focused($isTextFieldFocused)
                     .onChange(of: branchName) { oldValue, newValue in
-                        filterBranches(newValue)
+                        filterRefs(newValue)
                         selectedIndex = -1
                     }
                     .onKeyPress(.return) {
-                        if selectedIndex >= 0 && selectedIndex < filteredBranches.count {
-                            onSelect(filteredBranches[selectedIndex])
-                        } else if !branchName.isEmpty {
-                            onSelect(branchName)
+                        if selectedIndex >= 0 && selectedIndex < filteredRefs.count {
+                            onSelect(filteredRefs[selectedIndex].ref)
+                        } else if !branchName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            onSelect(branchName.trimmingCharacters(in: .whitespacesAndNewlines))
                         } else {
                             onSelect(nil)
                         }
@@ -50,15 +64,15 @@ struct BranchSelectionView: View {
                     .onKeyPress(.upArrow) {
                         if selectedIndex > 0 {
                             selectedIndex -= 1
-                        } else if !filteredBranches.isEmpty {
-                            selectedIndex = filteredBranches.count - 1
+                        } else if !filteredRefs.isEmpty {
+                            selectedIndex = filteredRefs.count - 1
                         }
                         return .handled
                     }
                     .onKeyPress(.downArrow) {
-                        if selectedIndex < filteredBranches.count - 1 {
+                        if selectedIndex < filteredRefs.count - 1 {
                             selectedIndex += 1
-                        } else if !filteredBranches.isEmpty {
+                        } else if !filteredRefs.isEmpty {
                             selectedIndex = 0
                         }
                         return .handled
@@ -68,13 +82,21 @@ struct BranchSelectionView: View {
                     }
                 
                 // Dropdown list
-                if isTextFieldFocused && !filteredBranches.isEmpty {
+                if isTextFieldFocused && !filteredRefs.isEmpty {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 0) {
-                            ForEach(Array(filteredBranches.enumerated()), id: \.element) { index, branch in
+                            ForEach(Array(filteredRefs.enumerated()), id: \.element.id) { index, suggestion in
                                 HStack {
-                                    Text(branch)
-                                        .font(.system(.body))
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(suggestion.title)
+                                            .font(.system(.body))
+                                        if let subtitle = suggestion.subtitle {
+                                            Text(subtitle)
+                                                .font(.caption)
+                                                .foregroundColor(.secondary)
+                                                .lineLimit(1)
+                                        }
+                                    }
                                     Spacer()
                                 }
                                 .padding(.horizontal, 12)
@@ -82,10 +104,10 @@ struct BranchSelectionView: View {
                                 .background(selectedIndex == index ? Color.accentColor.opacity(0.2) : Color.clear)
                                 .contentShape(Rectangle())
                                 .onTapGesture {
-                                    onSelect(branch)
+                                    onSelect(suggestion.ref)
                                 }
                                 
-                                if index < filteredBranches.count - 1 {
+                                if index < filteredRefs.count - 1 {
                                     Divider()
                                 }
                             }
@@ -105,7 +127,7 @@ struct BranchSelectionView: View {
                 HStack {
                     ProgressView()
                         .scaleEffect(0.8)
-                    Text("Loading branches...")
+                    Text("Loading branches and commits...")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -119,10 +141,10 @@ struct BranchSelectionView: View {
                 .keyboardShortcut(.cancelAction)
                 
                 Button("Run Tests") {
-                    if selectedIndex >= 0 && selectedIndex < filteredBranches.count {
-                        onSelect(filteredBranches[selectedIndex])
-                    } else if !branchName.isEmpty {
-                        onSelect(branchName)
+                    if selectedIndex >= 0 && selectedIndex < filteredRefs.count {
+                        onSelect(filteredRefs[selectedIndex].ref)
+                    } else if !branchName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        onSelect(branchName.trimmingCharacters(in: .whitespacesAndNewlines))
                     } else {
                         onSelect(nil)
                     }
@@ -148,74 +170,107 @@ struct BranchSelectionView: View {
         let repositoryPath = settings.repositoryPath
         
         DispatchQueue.global(qos: .userInitiated).async {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-            process.arguments = ["branch", "-a"]
-            process.currentDirectoryURL = URL(fileURLWithPath: repositoryPath)
-            
-            let outputPipe = Pipe()
-            process.standardOutput = outputPipe
-            
-            do {
-                try process.run()
-                process.waitUntilExit()
-                
-                let data = outputPipe.fileHandleForReading.readDataToEndOfFile()
-                if let output = String(data: data, encoding: .utf8) {
-                    var branches = output.components(separatedBy: .newlines)
-                        .map { line in
-                            // Remove leading * and whitespace
-                            var branch = line.trimmingCharacters(in: .whitespaces)
-                            if branch.hasPrefix("* ") {
-                                branch = String(branch.dropFirst(2))
-                            }
-                            
-                            // Remove leading "+ " if present (branches ahead of remote)
-                            if branch.hasPrefix("+ ") {
-                                branch = String(branch.dropFirst(2))
-                            }
-                            
-                            // Remove "remotes/" or "remotes/origin/" prefix but preserve branch name structure
-                            if branch.hasPrefix("remotes/origin/") {
-                                branch = String(branch.dropFirst("remotes/origin/".count))
-                            } else if branch.hasPrefix("remotes/") {
-                                branch = String(branch.dropFirst("remotes/".count))
-                            }
-                            
-                            return branch.trimmingCharacters(in: .whitespaces)
-                        }
-                        .filter { !$0.isEmpty }
-                        .filter { !$0.hasPrefix("HEAD") }
-                        .filter { !$0.contains("->") } // Filter out symbolic refs
-                    
-                    // Remove duplicates and sort
-                    branches = Array(Set(branches)).sorted()
-                    
-                    DispatchQueue.main.async {
-                        self.availableBranches = branches
-                        self.filteredBranches = branches
-                        self.isLoading = false
-                    }
-                } else {
-                    DispatchQueue.main.async {
-                        self.isLoading = false
-                    }
-                }
-            } catch {
-                DispatchQueue.main.async {
-                    self.isLoading = false
-                }
+            let branchOutput = self.runGitCommand(["branch", "-a"], repositoryPath: repositoryPath)
+            let commitOutput = self.runGitCommand(
+                ["log", "--all", "--pretty=format:%H%x09%h%x09%s", "-n", "250"],
+                repositoryPath: repositoryPath
+            )
+
+            let branchSuggestions = self.parseBranchSuggestions(from: branchOutput ?? "")
+            let commitSuggestions = self.parseCommitSuggestions(from: commitOutput ?? "")
+            let allSuggestions = branchSuggestions + commitSuggestions
+
+            DispatchQueue.main.async {
+                self.availableRefs = allSuggestions
+                self.filterRefs(self.branchName)
+                self.isLoading = false
             }
         }
     }
     
-    private func filterBranches(_ searchText: String) {
-        if searchText.isEmpty {
-            filteredBranches = availableBranches
-        } else {
-            filteredBranches = availableBranches.filter { branch in
-                branch.localizedCaseInsensitiveContains(searchText)
-            }
+    private func runGitCommand(_ arguments: [String], repositoryPath: String) -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        process.arguments = arguments
+        process.currentDirectoryURL = URL(fileURLWithPath: repositoryPath)
+
+        let outputPipe = Pipe()
+        process.standardOutput = outputPipe
+        process.standardError = outputPipe
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+            let data = outputPipe.fileHandleForReading.readDataToEndOfFile()
+            guard process.terminationStatus == 0 else { return nil }
+            return String(data: data, encoding: .utf8)
+        } catch {
+            return nil
         }
+    }
+
+    private func parseBranchSuggestions(from output: String) -> [RefSuggestion] {
+        var branches = output.components(separatedBy: .newlines)
+            .map { line in
+                var branch = line.trimmingCharacters(in: .whitespaces)
+                if branch.hasPrefix("* ") {
+                    branch = String(branch.dropFirst(2))
+                }
+                if branch.hasPrefix("+ ") {
+                    branch = String(branch.dropFirst(2))
+                }
+                if branch.hasPrefix("remotes/origin/") {
+                    branch = String(branch.dropFirst("remotes/origin/".count))
+                } else if branch.hasPrefix("remotes/") {
+                    branch = String(branch.dropFirst("remotes/".count))
+                }
+                return branch.trimmingCharacters(in: .whitespaces)
+            }
+            .filter { !$0.isEmpty }
+            .filter { !$0.hasPrefix("HEAD") }
+            .filter { !$0.contains("->") }
+
+        branches = Array(Set(branches)).sorted()
+        return branches.map { branch in
+            RefSuggestion(kind: .branch, ref: branch, title: branch, subtitle: "Branch")
+        }
+    }
+
+    private func parseCommitSuggestions(from output: String) -> [RefSuggestion] {
+        output.components(separatedBy: .newlines).compactMap { line in
+            let fields = line.components(separatedBy: "\t")
+            guard fields.count >= 3 else { return nil }
+            let fullSHA = fields[0].trimmingCharacters(in: .whitespaces)
+            let shortSHA = fields[1].trimmingCharacters(in: .whitespaces)
+            let subject = fields[2].trimmingCharacters(in: .whitespaces)
+            guard !fullSHA.isEmpty, !shortSHA.isEmpty else { return nil }
+            return RefSuggestion(
+                kind: .commit,
+                ref: fullSHA,
+                title: "\(shortSHA) \(subject)",
+                subtitle: "Commit \(fullSHA)"
+            )
+        }
+    }
+
+    private func filterRefs(_ searchText: String) {
+        let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            filteredRefs = availableRefs.filter { $0.kind == .branch }
+            return
+        }
+
+        let lowercased = trimmed.lowercased()
+        let branchMatches = availableRefs.filter {
+            $0.kind == .branch && $0.ref.localizedCaseInsensitiveContains(trimmed)
+        }
+        let commitMatches = availableRefs.filter { suggestion in
+            guard suggestion.kind == .commit else { return false }
+            return suggestion.ref.lowercased().hasPrefix(lowercased)
+                || suggestion.title.lowercased().contains(lowercased)
+                || (suggestion.subtitle?.lowercased().contains(lowercased) ?? false)
+        }
+
+        filteredRefs = branchMatches + commitMatches
     }
 }

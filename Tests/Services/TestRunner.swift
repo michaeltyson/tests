@@ -175,14 +175,17 @@ class TestRunner: ObservableObject {
 
             if self.shouldStopBeforeLaunchingProcess() { return }
             
-            // Checkout branch and reset to match remote (handles divergent branches)
+            // Checkout selected ref (branch or commit SHA)
             DispatchQueue.main.async {
-                self.output += "Checking out branch '\(branchToUse)'...\n"
+                self.output += "Checking out '\(branchToUse)'...\n"
             }
-            print("TestRunner: Checking out branch: \(branchToUse)")
-            if !self.checkoutAndResetBranchSync(branchToUse, in: branchWorkspace) {
+            print("TestRunner: Checking out ref: \(branchToUse)")
+            if !self.checkoutRefSync(branchToUse, in: branchWorkspace) {
                 self.abortRun(removeCurrentRun: true)
-                self.showError("Failed to checkout branch", message: "Could not checkout branch '\(branchToUse)'. Please verify the branch exists.")
+                self.showError(
+                    "Failed to checkout ref",
+                    message: "Could not checkout '\(branchToUse)'. Please verify the branch name, commit SHA, or commit message selection."
+                )
                 return
             }
 
@@ -294,7 +297,8 @@ class TestRunner: ObservableObject {
     @discardableResult
     private func runGitCommandSync(
         _ arguments: [String],
-        in directory: URL? = nil
+        in directory: URL? = nil,
+        suppressFailureLogging: Bool = false
     ) -> GitCommandResult {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
@@ -319,7 +323,7 @@ class TestRunner: ObservableObject {
             }
             
             let success = process.terminationStatus == 0
-            if !success {
+            if !success && !suppressFailureLogging {
                 let command = arguments.joined(separator: " ")
                 let trimmed = outputString.trimmingCharacters(in: .whitespacesAndNewlines)
                 print("TestRunner: Git command failed (\(command))")
@@ -367,15 +371,36 @@ class TestRunner: ObservableObject {
         }
     }
     
-    private func checkoutAndResetBranchSync(_ branchName: String, in directory: URL) -> Bool {
-        // First, try to checkout the branch.
-        let checkoutResult = runGitCommandSync(["checkout", branchName], in: directory)
-        if !checkoutResult.success {
-            return false
+    private func checkoutRefSync(_ ref: String, in directory: URL) -> Bool {
+        if isKnownBranchRef(ref, in: directory) {
+            let checkoutResult = runGitCommandSync(["checkout", ref], in: directory)
+            if !checkoutResult.success {
+                return false
+            }
+            return resetToRemoteBranch(ref, in: directory)
         }
-        
-        // Now reset the branch to match the remote (this handles divergent branches)
-        return resetToRemoteBranch(branchName, in: directory)
+
+        // Fallback for commit SHA/short SHA: detached checkout.
+        let detachedCheckout = runGitCommandSync(["checkout", "--detach", ref], in: directory)
+        return detachedCheckout.success
+    }
+
+    private func isKnownBranchRef(_ ref: String, in directory: URL) -> Bool {
+        let localExists = runGitCommandSync(
+            ["show-ref", "--verify", "--quiet", "refs/heads/\(ref)"],
+            in: directory,
+            suppressFailureLogging: true
+        ).success
+        if localExists {
+            return true
+        }
+
+        let remoteExists = runGitCommandSync(
+            ["show-ref", "--verify", "--quiet", "refs/remotes/origin/\(ref)"],
+            in: directory,
+            suppressFailureLogging: true
+        ).success
+        return remoteExists
     }
     
     private func abortRun(removeCurrentRun: Bool) {
@@ -396,7 +421,8 @@ class TestRunner: ObservableObject {
         // Check if remote branch exists.
         let checkResult = runGitCommandSync(
             ["show-ref", "--verify", "--quiet", "refs/remotes/origin/\(branchName)"],
-            in: directory
+            in: directory,
+            suppressFailureLogging: true
         )
         if !checkResult.success {
             print("TestRunner: Remote branch 'origin/\(branchName)' does not exist, skipping reset")
