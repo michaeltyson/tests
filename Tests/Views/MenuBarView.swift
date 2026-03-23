@@ -96,7 +96,7 @@ class MenuBarManager: ObservableObject {
             case .failed, .error:
                 iconName = "xmark.circle.fill"
             case .warnings:
-                iconName = "exclamationmark.triangle.fill"
+                iconName = "checkmark.circle.fill"
             case .paused:
                 iconName = "pause.fill"
             default:
