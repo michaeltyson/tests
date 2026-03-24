@@ -98,7 +98,8 @@ class TestRunner: ObservableObject {
 
         print("TestRunner: Using repository path: \(settings.repositoryPath)")
         print("TestRunner: Using branch: \(branchToUse)")
-        let repositoryRoot = URL(fileURLWithPath: settings.repositoryPath)
+        let configuredRepositoryRoot = URL(fileURLWithPath: settings.repositoryPath)
+        let repositoryRoot = resolvedRepositorySourceURL(from: configuredRepositoryRoot)
         let branchWorkspace = workspaceFolder()
 
         prepareForRunStart()
@@ -148,6 +149,23 @@ class TestRunner: ObservableObject {
                     return
                 }
             } else {
+                self.ensureWorkspaceRemoteMatchesSourceSync(source: repositoryRoot, workspace: branchWorkspace)
+
+                if !self.isUsableGitRepositorySync(at: branchWorkspace) {
+                    print("TestRunner: Workspace git metadata is invalid, rebuilding before fetch")
+                    DispatchQueue.main.async {
+                        self.output += "Workspace git metadata is invalid. Recreating workspace...\n"
+                    }
+                    if !self.recreateWorkspaceSync(from: repositoryRoot, to: branchWorkspace) {
+                        self.abortRun(removeCurrentRun: true)
+                        self.showError(
+                            "Failed to rebuild workspace",
+                            message: "Could not recreate the temp workspace from the configured repository."
+                        )
+                        return
+                    }
+                }
+
                 // Fetch latest changes from remote
                 DispatchQueue.main.async {
                     self.output += "Fetching repository updates...\n"
@@ -345,9 +363,70 @@ class TestRunner: ObservableObject {
         let result = runGitCommandSync(["clone", "file://\(source.path)", destination.path])
         return result.success
     }
-    
+
+    private func resolvedRepositorySourceURL(from configuredURL: URL) -> URL {
+        let commonDirResult = runGitCommandSync(
+            ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+            in: configuredURL,
+            suppressFailureLogging: true
+        )
+
+        guard commonDirResult.success else {
+            return configuredURL
+        }
+
+        let commonDirPath = commonDirResult.output.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !commonDirPath.isEmpty else {
+            return configuredURL
+        }
+
+        let commonDirURL = URL(fileURLWithPath: commonDirPath)
+        guard commonDirURL.lastPathComponent == ".git" else {
+            return configuredURL
+        }
+
+        let durableSourceURL = commonDirURL.deletingLastPathComponent()
+        if durableSourceURL.path != configuredURL.path {
+            print("TestRunner: Normalized repository source from \(configuredURL.path) to \(durableSourceURL.path)")
+        }
+        return durableSourceURL
+    }
+
     private func fetchRepositorySync(in directory: URL) -> GitCommandResult {
         runGitCommandSync(["fetch", "origin"], in: directory)
+    }
+
+    private func isUsableGitRepositorySync(at directory: URL) -> Bool {
+        runGitCommandSync(["rev-parse", "--git-dir"], in: directory, suppressFailureLogging: true).success
+    }
+
+    private func ensureWorkspaceRemoteMatchesSourceSync(source: URL, workspace: URL) {
+        let expectedRemote = "file://\(source.path)"
+        let currentRemoteResult = runGitCommandSync(
+            ["config", "--get", "remote.origin.url"],
+            in: workspace,
+            suppressFailureLogging: true
+        )
+        let currentRemote = currentRemoteResult.output.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard currentRemote != expectedRemote else {
+            return
+        }
+
+        if currentRemote.isEmpty {
+            print("TestRunner: Setting workspace origin to \(expectedRemote)")
+            DispatchQueue.main.async { [weak self] in
+                self?.output += "Configuring workspace remote...\n"
+            }
+            _ = runGitCommandSync(["remote", "add", "origin", expectedRemote], in: workspace)
+            return
+        }
+
+        print("TestRunner: Updating workspace origin from \(currentRemote) to \(expectedRemote)")
+        DispatchQueue.main.async { [weak self] in
+            self?.output += "Updating workspace remote...\n"
+        }
+        _ = runGitCommandSync(["remote", "set-url", "origin", expectedRemote], in: workspace)
     }
     
     private func recreateWorkspaceSync(from source: URL, to destination: URL) -> Bool {
@@ -479,8 +558,12 @@ class TestRunner: ObservableObject {
         let escapedWorkspacePath = shellEscape(workspaceURL.path)
         let escapedScheme = shellEscape("Loopy Pro (macOS)")
         let escapedDestination = shellEscape("platform=macOS,arch=arm64")
+        let parallelTestingArguments = xcodebuildParallelTestingArguments(from: SettingsStore.shared)
+            .map(shellEscape)
+            .joined(separator: " ")
+        let optionalParallelArguments = parallelTestingArguments.isEmpty ? "" : " \(parallelTestingArguments)"
         let xcodebuildCommand = """
-        /usr/bin/xcodebuild -workspace \(escapedWorkspacePath) -scheme \(escapedScheme) -destination \(escapedDestination) build-for-testing && /usr/bin/xcodebuild -workspace \(escapedWorkspacePath) -scheme \(escapedScheme) -destination \(escapedDestination) test-without-building
+        /usr/bin/xcodebuild -workspace \(escapedWorkspacePath) -scheme \(escapedScheme) -destination \(escapedDestination)\(optionalParallelArguments) build-for-testing && /usr/bin/xcodebuild -workspace \(escapedWorkspacePath) -scheme \(escapedScheme) -destination \(escapedDestination)\(optionalParallelArguments) test-without-building
         """
         
         // Check if xcbeautify is available
@@ -1109,6 +1192,15 @@ class TestRunner: ObservableObject {
                 print("TestRunner: Failed to send start notification: \(error)")
             }
         }
+    }
+
+    static func xcodebuildParallelTestingArguments(enabled: Bool) -> [String] {
+        guard enabled else { return [] }
+        return ["-parallel-testing-enabled", "YES"]
+    }
+
+    private func xcodebuildParallelTestingArguments(from settings: SettingsStore) -> [String] {
+        Self.xcodebuildParallelTestingArguments(enabled: settings.parallelTestingEnabled)
     }
     
     private func sendTestCompletionNotification(testRun: TestRun) {

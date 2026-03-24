@@ -12,6 +12,7 @@ struct SettingsView: View {
     @ObservedObject var settings = SettingsStore.shared
     @State private var repositoryPath: String = ""
     @State private var branchName: String = ""
+    @State private var parallelTestingEnabled: Bool = true
     
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -46,6 +47,16 @@ struct SettingsView: View {
                 TextField("Branch name", text: $branchName)
                     .textFieldStyle(.roundedBorder)
             }
+
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Parallel Testing")
+                    .font(.headline)
+                Text("Enable xcodebuild parallel test execution and let Xcode manage the worker count automatically.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+
+                Toggle("Enable parallel testing", isOn: $parallelTestingEnabled)
+            }
             
             Spacer()
             
@@ -66,6 +77,7 @@ struct SettingsView: View {
         .onAppear {
             repositoryPath = settings.repositoryPath
             branchName = settings.branchName ?? ""
+            parallelTestingEnabled = settings.parallelTestingEnabled
         }
     }
     
@@ -87,6 +99,6 @@ struct SettingsView: View {
     private func saveSettings() {
         settings.setRepositoryPath(repositoryPath)
         settings.setBranchName(branchName.isEmpty ? nil : branchName)
+        settings.setParallelTestingEnabled(parallelTestingEnabled)
     }
 }
-

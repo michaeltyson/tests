@@ -2,6 +2,20 @@ import XCTest
 @testable import Tests
 
 final class TestRunnerQueueTests: XCTestCase {
+    func testParallelTestingArgumentsIncludedWhenEnabled() {
+        XCTAssertEqual(
+            TestRunner.xcodebuildParallelTestingArguments(enabled: true),
+            ["-parallel-testing-enabled", "YES"]
+        )
+    }
+
+    func testParallelTestingArgumentsOmittedWhenDisabled() {
+        XCTAssertEqual(
+            TestRunner.xcodebuildParallelTestingArguments(enabled: false),
+            []
+        )
+    }
+
     func testSameBranchTriggerQueuesOnceAndRequestsCancellation() {
         let runner = TestRunner()
         runner.isRunning = true
