@@ -40,6 +40,7 @@ class TestRunner: ObservableObject {
     private let fileManager = FileManager.default
     
     private static let totalCountKey = "com.atastypixel.Tests.lastTotalCount"
+    private static let lastPreparedWorkspaceRefKey = "com.atastypixel.Tests.lastPreparedWorkspaceRef"
 
     private struct PendingRunRequest {
         let branchName: String
@@ -107,6 +108,7 @@ class TestRunner: ObservableObject {
         // Move all setup work to a serial background queue to avoid overlapping git operations.
         setupQueue.async { [weak self] in
             guard let self = self else { return }
+            let previousPreparedRef = self.previouslyPreparedWorkspaceRef(in: branchWorkspace)
 
             if self.shouldStopBeforeLaunchingProcess() { return }
             
@@ -204,6 +206,27 @@ class TestRunner: ObservableObject {
                 )
                 return
             }
+
+            if Self.shouldCleanWorkspaceForRefChange(previousRef: previousPreparedRef, nextRef: branchToUse) {
+                DispatchQueue.main.async {
+                    self.output += "Branch changed from '\(previousPreparedRef ?? "unknown")' to '\(branchToUse)'. Cleaning workspace state...\n"
+                }
+                print("TestRunner: Branch changed from \(previousPreparedRef ?? "unknown") to \(branchToUse); cleaning disposable workspace state before build")
+                if !self.cleanWorkspaceStateSync(in: branchWorkspace) {
+                    self.abortRun(removeCurrentRun: true)
+                    self.showError(
+                        "Failed to clean workspace",
+                        message: "Could not remove stale workspace state before building."
+                    )
+                    return
+                }
+            } else {
+                DispatchQueue.main.async {
+                    self.output += "Branch unchanged. Reusing existing build state...\n"
+                }
+                print("TestRunner: Branch unchanged (\(branchToUse)); reusing existing build state")
+            }
+            self.recordPreparedWorkspaceRef(branchToUse)
 
             if self.shouldStopBeforeLaunchingProcess() { return }
             
@@ -537,6 +560,68 @@ class TestRunner: ObservableObject {
         let resetResult = runGitCommandSync(["reset", "--hard", "origin/\(branchName)"], in: directory)
         return resetResult.success
     }
+
+    private func cleanWorkspaceStateSync(in directory: URL) -> Bool {
+        let cleanResult = runGitCommandSync(["clean", "-ffd"], in: directory)
+        guard cleanResult.success else {
+            return false
+        }
+
+        for directoryName in Self.workspaceBuildArtifactDirectoryNames {
+            let artifactURL = directory.appendingPathComponent(directoryName, isDirectory: true)
+            guard fileManager.fileExists(atPath: artifactURL.path) else { continue }
+
+            do {
+                try fileManager.removeItem(at: artifactURL)
+                print("TestRunner: Removed stale build artifact directory: \(artifactURL.path)")
+                DispatchQueue.main.async { [weak self] in
+                    self?.output += "Removed stale build artifact directory '\(directoryName)'.\n"
+                }
+            } catch {
+                print("TestRunner: Failed to remove build artifact directory \(artifactURL.path): \(error)")
+                DispatchQueue.main.async { [weak self] in
+                    self?.output += "Error: Failed to remove build artifact directory '\(directoryName)': \(error.localizedDescription)\n"
+                }
+                return false
+            }
+        }
+
+        return true
+    }
+
+    private func previouslyPreparedWorkspaceRef(in directory: URL) -> String? {
+        guard fileManager.fileExists(atPath: directory.appendingPathComponent(".git").path) else {
+            return nil
+        }
+
+        let storedRef = UserDefaults.standard.string(forKey: Self.lastPreparedWorkspaceRefKey)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if let storedRef, !storedRef.isEmpty {
+            return storedRef
+        }
+
+        let currentBranchResult = runGitCommandSync(
+            ["symbolic-ref", "--quiet", "--short", "HEAD"],
+            in: directory,
+            suppressFailureLogging: true
+        )
+        let currentBranch = currentBranchResult.output.trimmingCharacters(in: .whitespacesAndNewlines)
+        if currentBranchResult.success, !currentBranch.isEmpty {
+            return currentBranch
+        }
+
+        let currentCommitResult = runGitCommandSync(
+            ["rev-parse", "--short", "HEAD"],
+            in: directory,
+            suppressFailureLogging: true
+        )
+        let currentCommit = currentCommitResult.output.trimmingCharacters(in: .whitespacesAndNewlines)
+        return currentCommit.isEmpty ? nil : currentCommit
+    }
+
+    private func recordPreparedWorkspaceRef(_ ref: String) {
+        UserDefaults.standard.set(ref, forKey: Self.lastPreparedWorkspaceRefKey)
+    }
     
     private func runXcodebuildTests(workspaceURL: URL, branchName: String, workspaceDirectory: URL) {
         if isCancelled {
@@ -558,6 +643,7 @@ class TestRunner: ObservableObject {
         let escapedWorkspacePath = shellEscape(workspaceURL.path)
         let escapedScheme = shellEscape("Loopy Pro (macOS)")
         let escapedDestination = shellEscape("platform=macOS,arch=arm64")
+        let escapedDerivedDataPath = shellEscape(workspaceBuildArtifactDirectory(in: workspaceDirectory).path)
         let parallelBuildArguments = xcodebuildParallelBuildArguments(from: SettingsStore.shared)
             .map(shellEscape)
             .joined(separator: " ")
@@ -567,7 +653,7 @@ class TestRunner: ObservableObject {
         let optionalParallelBuildArguments = parallelBuildArguments.isEmpty ? "" : " \(parallelBuildArguments)"
         let optionalParallelArguments = parallelTestingArguments.isEmpty ? "" : " \(parallelTestingArguments)"
         let xcodebuildCommand = """
-        /usr/bin/xcodebuild -workspace \(escapedWorkspacePath) -scheme \(escapedScheme) -destination \(escapedDestination)\(optionalParallelBuildArguments)\(optionalParallelArguments) build-for-testing && /usr/bin/xcodebuild -workspace \(escapedWorkspacePath) -scheme \(escapedScheme) -destination \(escapedDestination)\(optionalParallelArguments) test-without-building
+        /usr/bin/xcodebuild -workspace \(escapedWorkspacePath) -scheme \(escapedScheme) -destination \(escapedDestination) -derivedDataPath \(escapedDerivedDataPath)\(optionalParallelBuildArguments)\(optionalParallelArguments) build-for-testing && /usr/bin/xcodebuild -workspace \(escapedWorkspacePath) -scheme \(escapedScheme) -destination \(escapedDestination) -derivedDataPath \(escapedDerivedDataPath)\(optionalParallelArguments) test-without-building
         """
         
         // Check if xcbeautify is available
@@ -1208,6 +1294,23 @@ class TestRunner: ObservableObject {
         return ["-parallelizeTargets", "-jobs", String(max(1, jobCount))]
     }
 
+    static let workspaceBuildArtifactDirectoryNames = [".DerivedData", "DerivedData", "build"]
+
+    static func workspaceBuildArtifactDirectory(in workspaceDirectory: URL) -> URL {
+        workspaceDirectory.appendingPathComponent(".DerivedData", isDirectory: true)
+    }
+
+    static func shouldCleanWorkspaceForRefChange(previousRef: String?, nextRef: String) -> Bool {
+        let trimmedNextRef = nextRef.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedNextRef.isEmpty else { return false }
+
+        guard let previousRef = previousRef?.trimmingCharacters(in: .whitespacesAndNewlines), !previousRef.isEmpty else {
+            return false
+        }
+
+        return previousRef != trimmedNextRef
+    }
+
     private func xcodebuildParallelTestingArguments(from settings: SettingsStore) -> [String] {
         Self.xcodebuildParallelTestingArguments(enabled: settings.parallelTestingEnabled)
     }
@@ -1217,6 +1320,10 @@ class TestRunner: ObservableObject {
             enabled: settings.parallelBuildTargetsEnabled,
             jobCount: settings.parallelBuildJobCount
         )
+    }
+
+    private func workspaceBuildArtifactDirectory(in workspaceDirectory: URL) -> URL {
+        Self.workspaceBuildArtifactDirectory(in: workspaceDirectory)
     }
     
     private func sendTestCompletionNotification(testRun: TestRun) {

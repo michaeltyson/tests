@@ -30,6 +30,40 @@ final class TestRunnerQueueTests: XCTestCase {
         )
     }
 
+    func testWorkspaceBuildArtifactDirectoryUsesLocalDerivedDataFolder() {
+        let workspaceURL = URL(fileURLWithPath: "/tmp/LoopyWorkspace", isDirectory: true)
+
+        XCTAssertEqual(
+            TestRunner.workspaceBuildArtifactDirectory(in: workspaceURL).path,
+            "/tmp/LoopyWorkspace/.DerivedData"
+        )
+    }
+
+    func testWorkspaceBuildArtifactDirectoryNamesCoverCommonBuildCaches() {
+        XCTAssertEqual(
+            TestRunner.workspaceBuildArtifactDirectoryNames,
+            [".DerivedData", "DerivedData", "build"]
+        )
+    }
+
+    func testWorkspaceCleanupSkippedWithoutPreviousRef() {
+        XCTAssertFalse(
+            TestRunner.shouldCleanWorkspaceForRefChange(previousRef: nil, nextRef: "release/2.1")
+        )
+    }
+
+    func testWorkspaceCleanupSkippedWhenRefUnchanged() {
+        XCTAssertFalse(
+            TestRunner.shouldCleanWorkspaceForRefChange(previousRef: "release/2.1", nextRef: "release/2.1")
+        )
+    }
+
+    func testWorkspaceCleanupTriggeredWhenRefChanges() {
+        XCTAssertTrue(
+            TestRunner.shouldCleanWorkspaceForRefChange(previousRef: "develop", nextRef: "release/2.1")
+        )
+    }
+
     func testSameBranchTriggerQueuesOnceAndRequestsCancellation() {
         let runner = TestRunner()
         runner.isRunning = true
