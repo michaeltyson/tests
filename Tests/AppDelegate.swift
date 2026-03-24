@@ -223,9 +223,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         print("AppDelegate: App is active: \(NSApp.isActive)")
         print("AppDelegate: TestRunner isPaused: \(testRunner.isPaused)")
         
-        // Activate the app to ensure menu bar updates are visible
-        NSApp.activate(ignoringOtherApps: true)
-        
         // Only run tests if not paused (paused means ignore incoming notifications)
         if !testRunner.isPaused {
             let branchName = notification.userInfo?["branch"] as? String

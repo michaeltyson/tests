@@ -50,7 +50,8 @@ struct TestsCLI {
             // Launch the app
             if let appURL = findAppBundle() {
                 let config = NSWorkspace.OpenConfiguration()
-                config.activates = true
+                // Post-commit triggers should start the menu bar app in the background.
+                config.activates = false
                 var launchError: Error?
                 let semaphore = DispatchSemaphore(value: 0)
                 
@@ -134,4 +135,3 @@ struct TestsCLI {
         return nil
     }
 }
-
