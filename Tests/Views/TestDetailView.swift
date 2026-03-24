@@ -143,8 +143,7 @@ struct TestDetailView: View {
                         currentFailureIndex: $currentFailureIndex
                     )
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-                    .padding(8)
-                    .background(Color.white)
+                    .modifier(OutputPaneModifier())
                     .onAppear {
                         // Find ranges in the displayed text (after ANSI parsing simulation)
                         findFailureRangesInDisplayedText(in: output)
@@ -402,7 +401,8 @@ struct TerminalOutputView: NSViewRepresentable {
         textView.isSelectable = true
         textView.allowsUndo = false
         textView.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
-        textView.backgroundColor = NSColor.textBackgroundColor
+        textView.drawsBackground = false
+        textView.backgroundColor = .clear
         textView.textColor = NSColor.labelColor
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
@@ -424,6 +424,8 @@ struct TerminalOutputView: NSViewRepresentable {
         scrollView.borderType = .noBorder
         scrollView.autohidesScrollers = true
         scrollView.scrollerStyle = .overlay
+        scrollView.drawsBackground = false
+        scrollView.backgroundColor = .clear
         
         // Enable frame change notifications for width tracking
         scrollView.contentView.postsFrameChangedNotifications = true
@@ -820,3 +822,20 @@ struct TerminalOutputView: NSViewRepresentable {
     }
 }
 
+struct OutputPaneModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .padding(10)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color(nsColor: .textBackgroundColor).opacity(0.72))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
+            )
+            .shadow(color: Color.black.opacity(0.04), radius: 6, y: 1)
+            .padding(.horizontal, 12)
+            .padding(.bottom, 12)
+    }
+}
