@@ -273,6 +273,21 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     
     @objc func showSettingsWindow() {
         if let window = settingsWindow {
+            let contentSize = NSSize(width: 700, height: 560)
+            window.contentMinSize = contentSize
+            window.contentMaxSize = contentSize
+            window.setContentSize(contentSize)
+
+            if let screenFrame = window.screen?.visibleFrame ?? NSScreen.main?.visibleFrame {
+                let frameSize = window.frame.size
+                let origin = NSPoint(
+                    x: screenFrame.midX - (frameSize.width / 2),
+                    y: screenFrame.midY - (frameSize.height / 2)
+                )
+                window.setFrameOrigin(origin)
+            } else {
+                window.center()
+            }
             window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
         }
@@ -374,18 +389,30 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func setupSettingsWindow() {
         let contentView = SettingsView()
         let hostingView = NSHostingView(rootView: contentView)
+        let windowSize = NSSize(width: 700, height: 560)
         
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 600, height: 300),
+            contentRect: NSRect(origin: .zero, size: windowSize),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
         )
         
         window.title = "Settings"
-        window.contentView = hostingView
+        hostingView.translatesAutoresizingMaskIntoConstraints = false
+        window.contentView = NSView(frame: NSRect(origin: .zero, size: windowSize))
+        window.contentView?.addSubview(hostingView)
+        if let contentRoot = window.contentView {
+            NSLayoutConstraint.activate([
+                hostingView.topAnchor.constraint(equalTo: contentRoot.topAnchor),
+                hostingView.leadingAnchor.constraint(equalTo: contentRoot.leadingAnchor),
+                hostingView.trailingAnchor.constraint(equalTo: contentRoot.trailingAnchor),
+                hostingView.bottomAnchor.constraint(equalTo: contentRoot.bottomAnchor)
+            ])
+        }
+        window.contentMinSize = windowSize
+        window.contentMaxSize = windowSize
         window.center()
-        window.setFrameAutosaveName("SettingsWindow")
         window.isReleasedWhenClosed = false
         
         settingsWindow = window

@@ -13,71 +13,96 @@ struct SettingsView: View {
     @State private var repositoryPath: String = ""
     @State private var branchName: String = ""
     @State private var parallelTestingEnabled: Bool = true
+    @State private var parallelBuildTargetsEnabled: Bool = true
+    @State private var parallelBuildJobCount: Int = 6
+    @State private var showAdvancedBuildSettings: Bool = false
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            Text("Settings")
-                .font(.title)
-                .padding(.bottom, 10)
-            
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Repository Path")
-                    .font(.headline)
-                Text("Path to the Loopy Pro git repository. The workspace file will be found automatically within this repository.")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                
-                HStack {
+        VStack(spacing: 18) {
+            header
+
+            settingsCard(
+                title: "Repository",
+                description: "Choose the Loopy Pro repository. The workspace is discovered automatically."
+            ) {
+                HStack(alignment: .center, spacing: 12) {
                     TextField("Repository path", text: $repositoryPath)
                         .textFieldStyle(.roundedBorder)
-                    
-                    Button("Browse...") {
+                    Button("Browse…") {
                         selectRepositoryPath()
                     }
+                    .controlSize(.large)
                 }
             }
-            
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Branch Name (Optional)")
-                    .font(.headline)
-                Text("Default branch to test when running tests manually. Leave empty to use current branch. Post-commit hooks can override this.")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                
+
+            settingsCard(
+                title: "Default Branch",
+                description: "Used for manual runs when you do not explicitly choose a branch."
+            ) {
                 TextField("Branch name", text: $branchName)
                     .textFieldStyle(.roundedBorder)
             }
 
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Parallel Testing")
-                    .font(.headline)
-                Text("Enable xcodebuild parallel test execution and let Xcode manage the worker count automatically.")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+            HStack(alignment: .top, spacing: 16) {
+                settingsCard(
+                    title: "Test Parallelization",
+                    description: "Let xcodebuild execute tests in parallel when supported."
+                ) {
+                    Toggle("Enable parallel testing", isOn: $parallelTestingEnabled)
+                        .toggleStyle(.switch)
+                }
 
-                Toggle("Enable parallel testing", isOn: $parallelTestingEnabled)
+                settingsCard(
+                    title: "Build Parallelization",
+                    description: "Parallelize targets during the build-for-testing step."
+                ) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Toggle("Parallelize targets", isOn: $parallelBuildTargetsEnabled)
+                            .toggleStyle(.switch)
+
+                        if showAdvancedBuildSettings {
+                            HStack {
+                                Text("Build jobs")
+                                    .foregroundColor(.secondary)
+                                Spacer()
+                                Stepper(value: $parallelBuildJobCount, in: 1...32) {
+                                    Text("\(parallelBuildJobCount)")
+                                        .monospacedDigit()
+                                        .frame(minWidth: 28, alignment: .trailing)
+                                }
+                                .controlSize(.small)
+                            }
+                        }
+                    }
+                }
             }
-            
-            Spacer()
-            
+
             HStack {
                 Spacer()
                 Button("Cancel") {
                     NSApp.sendAction(#selector(NSWindow.close), to: nil, from: nil)
                 }
+                .controlSize(.large)
+
                 Button("Save") {
                     saveSettings()
                     NSApp.sendAction(#selector(NSWindow.close), to: nil, from: nil)
                 }
                 .buttonStyle(.borderedProminent)
+                .controlSize(.large)
             }
         }
-        .padding()
-        .frame(width: 600, height: 380)
+        .padding(.horizontal, 24)
+        .padding(.top, 24)
+        .padding(.bottom, 22)
+        .background(Color(nsColor: .windowBackgroundColor))
         .onAppear {
             repositoryPath = settings.repositoryPath
             branchName = settings.branchName ?? ""
             parallelTestingEnabled = settings.parallelTestingEnabled
+            parallelBuildTargetsEnabled = settings.parallelBuildTargetsEnabled
+            parallelBuildJobCount = settings.parallelBuildJobCount
+            showAdvancedBuildSettings = NSApp.currentEvent?.modifierFlags.contains(.option) == true
         }
     }
     
@@ -100,5 +125,57 @@ struct SettingsView: View {
         settings.setRepositoryPath(repositoryPath)
         settings.setBranchName(branchName.isEmpty ? nil : branchName)
         settings.setParallelTestingEnabled(parallelTestingEnabled)
+        settings.setParallelBuildTargetsEnabled(parallelBuildTargetsEnabled)
+        settings.setParallelBuildJobCount(parallelBuildJobCount)
+    }
+
+    private var header: some View {
+        HStack(alignment: .top) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Test Runner Settings")
+                    .font(.system(size: 28, weight: .semibold))
+                Text("Workspace, branch, and build execution defaults.")
+                    .font(.system(size: 13))
+                    .foregroundColor(.secondary)
+            }
+
+            Spacer()
+
+            Text(showAdvancedBuildSettings ? "Advanced" : "Standard")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(showAdvancedBuildSettings ? .accentColor : .secondary)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(
+                    Capsule()
+                        .fill(Color(nsColor: .controlBackgroundColor))
+                )
+        }
+    }
+
+    private func settingsCard<Content: View>(
+        title: String,
+        description: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(title)
+                .font(.system(size: 14, weight: .semibold))
+            Text(description)
+                .font(.system(size: 12))
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            content()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(18)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color(nsColor: .controlBackgroundColor))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.primary.opacity(0.06), lineWidth: 1)
+        )
     }
 }
