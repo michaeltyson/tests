@@ -81,56 +81,7 @@ struct BranchSelectionView: View {
                         isTextFieldFocused = true
                     }
                 
-                // Dropdown list
-                if isTextFieldFocused && !filteredRefs.isEmpty {
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 0) {
-                            ForEach(Array(filteredRefs.enumerated()), id: \.element.id) { index, suggestion in
-                                HStack {
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(suggestion.title)
-                                            .font(.system(.body))
-                                        if let subtitle = suggestion.subtitle {
-                                            Text(subtitle)
-                                                .font(.caption)
-                                                .foregroundColor(.secondary)
-                                                .lineLimit(1)
-                                        }
-                                    }
-                                    Spacer()
-                                }
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 8)
-                                .background(selectedIndex == index ? Color.accentColor.opacity(0.2) : Color.clear)
-                                .contentShape(Rectangle())
-                                .onTapGesture {
-                                    onSelect(suggestion.ref)
-                                }
-                                
-                                if index < filteredRefs.count - 1 {
-                                    Divider()
-                                }
-                            }
-                        }
-                    }
-                    .frame(maxHeight: 200)
-                    .background(Color(NSColor.controlBackgroundColor))
-                    .cornerRadius(8)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .strokeBorder(Color(NSColor.separatorColor), lineWidth: 1)
-                    )
-                }
-            }
-            
-            if isLoading {
-                HStack {
-                    ProgressView()
-                        .scaleEffect(0.8)
-                    Text("Loading branches and commits...")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
+                refsList
             }
             
             HStack {
@@ -161,6 +112,73 @@ struct BranchSelectionView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("RefreshBranchList"))) { _ in
             loadBranches()
         }
+    }
+
+    @ViewBuilder
+    private var refsList: some View {
+        Group {
+            if !filteredRefs.isEmpty {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(Array(filteredRefs.enumerated()), id: \.element.id) { index, suggestion in
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(suggestion.title)
+                                        .font(.system(.body))
+                                    if let subtitle = suggestion.subtitle {
+                                        Text(subtitle)
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                            .lineLimit(1)
+                                    }
+                                }
+                                Spacer()
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(selectedIndex == index ? Color.accentColor.opacity(0.2) : Color.clear)
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                onSelect(suggestion.ref)
+                            }
+
+                            if index < filteredRefs.count - 1 {
+                                Divider()
+                            }
+                        }
+                    }
+                }
+            } else if isLoading {
+                VStack {
+                    Spacer()
+                    ProgressView("Loading branches and commits...")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Spacer()
+                }
+            } else {
+                VStack(spacing: 6) {
+                    Spacer()
+                    Text(branchName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "No branches found." : "No matching branches or commits.")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                    if settings.repositoryPath.isEmpty {
+                        Text("Set a repository path in Settings to load branches.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity)
+            }
+        }
+        .frame(maxHeight: 200)
+        .background(Color(NSColor.controlBackgroundColor))
+        .cornerRadius(8)
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(Color(NSColor.separatorColor), lineWidth: 1)
+        )
     }
     
     private func loadBranches() {
