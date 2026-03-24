@@ -16,6 +16,20 @@ final class TestRunnerQueueTests: XCTestCase {
         )
     }
 
+    func testParallelBuildArgumentsIncludedWhenEnabled() {
+        XCTAssertEqual(
+            TestRunner.xcodebuildParallelBuildArguments(enabled: true, jobCount: 6),
+            ["-parallelizeTargets", "-jobs", "6"]
+        )
+    }
+
+    func testParallelBuildArgumentsOmittedWhenDisabled() {
+        XCTAssertEqual(
+            TestRunner.xcodebuildParallelBuildArguments(enabled: false, jobCount: 6),
+            []
+        )
+    }
+
     func testSameBranchTriggerQueuesOnceAndRequestsCancellation() {
         let runner = TestRunner()
         runner.isRunning = true

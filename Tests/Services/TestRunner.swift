@@ -558,12 +558,16 @@ class TestRunner: ObservableObject {
         let escapedWorkspacePath = shellEscape(workspaceURL.path)
         let escapedScheme = shellEscape("Loopy Pro (macOS)")
         let escapedDestination = shellEscape("platform=macOS,arch=arm64")
+        let parallelBuildArguments = xcodebuildParallelBuildArguments(from: SettingsStore.shared)
+            .map(shellEscape)
+            .joined(separator: " ")
         let parallelTestingArguments = xcodebuildParallelTestingArguments(from: SettingsStore.shared)
             .map(shellEscape)
             .joined(separator: " ")
+        let optionalParallelBuildArguments = parallelBuildArguments.isEmpty ? "" : " \(parallelBuildArguments)"
         let optionalParallelArguments = parallelTestingArguments.isEmpty ? "" : " \(parallelTestingArguments)"
         let xcodebuildCommand = """
-        /usr/bin/xcodebuild -workspace \(escapedWorkspacePath) -scheme \(escapedScheme) -destination \(escapedDestination)\(optionalParallelArguments) build-for-testing && /usr/bin/xcodebuild -workspace \(escapedWorkspacePath) -scheme \(escapedScheme) -destination \(escapedDestination)\(optionalParallelArguments) test-without-building
+        /usr/bin/xcodebuild -workspace \(escapedWorkspacePath) -scheme \(escapedScheme) -destination \(escapedDestination)\(optionalParallelBuildArguments)\(optionalParallelArguments) build-for-testing && /usr/bin/xcodebuild -workspace \(escapedWorkspacePath) -scheme \(escapedScheme) -destination \(escapedDestination)\(optionalParallelArguments) test-without-building
         """
         
         // Check if xcbeautify is available
@@ -1199,8 +1203,20 @@ class TestRunner: ObservableObject {
         return ["-parallel-testing-enabled", "YES"]
     }
 
+    static func xcodebuildParallelBuildArguments(enabled: Bool, jobCount: Int) -> [String] {
+        guard enabled else { return [] }
+        return ["-parallelizeTargets", "-jobs", String(max(1, jobCount))]
+    }
+
     private func xcodebuildParallelTestingArguments(from settings: SettingsStore) -> [String] {
         Self.xcodebuildParallelTestingArguments(enabled: settings.parallelTestingEnabled)
+    }
+
+    private func xcodebuildParallelBuildArguments(from settings: SettingsStore) -> [String] {
+        Self.xcodebuildParallelBuildArguments(
+            enabled: settings.parallelBuildTargetsEnabled,
+            jobCount: settings.parallelBuildJobCount
+        )
     }
     
     private func sendTestCompletionNotification(testRun: TestRun) {
