@@ -26,6 +26,45 @@ class MenuBarManager: ObservableObject {
     private var progressView: ProgressMenuView?
     private var originalAnchorPoint: CGPoint?
     private var originalPosition: CGPoint?
+
+    private func popupStatusText() -> String {
+        if isPaused {
+            return "Status: Paused"
+        }
+
+        if isRunning {
+            let queueText = queuedRunCount > 0 ? " (\(queuedRunCount) queued)" : ""
+            let phaseText = isBuilding ? "Building" : "Running"
+            return "Status: \(phaseText)\(queueText)"
+        }
+
+        guard let status = status else {
+            return "Status: Ready"
+        }
+
+        switch status {
+        case .success:
+            if passingCount > 0 || failingCount > 0 {
+                return "Status: \(passingCount) passed, \(failingCount) failed"
+            } else {
+                return "Status: Success"
+            }
+        case .failed:
+            if passingCount > 0 || failingCount > 0 {
+                return "Status: \(passingCount) passed, \(failingCount) failed"
+            } else {
+                return "Status: Failed"
+            }
+        case .error:
+            return "Status: Error"
+        case .warnings:
+            return "Status: Warnings"
+        case .paused:
+            return "Status: Paused"
+        default:
+            return "Status: Ready"
+        }
+    }
     
     func setup() {
         // Remove existing status item if any
@@ -264,6 +303,8 @@ class MenuBarManager: ObservableObject {
     
     func updateMenuItems() {
         guard let menu = menu, let statusMenuItem = statusMenuItem else { return }
+        let statusText = popupStatusText()
+        statusMenuItem.title = statusText
         
         if isRunning && !isPaused {
             // Show progress bar view when running
@@ -274,16 +315,16 @@ class MenuBarManager: ObservableObject {
             
             let currentCount = passingCount + failingCount
             let progress: Double
-            let statusText: String
+            let progressStatusText: String
             let queueText = queuedRunCount > 0 ? " (\(queuedRunCount) queued)" : ""
             
             if isBuilding {
                 // Building phase - show indeterminate progress
-                statusText = "Building\(queueText)"
+                progressStatusText = "Building\(queueText)"
                 progress = 0.0
             } else {
                 // Test phase - show actual progress
-                statusText = "Running\(queueText)"
+                progressStatusText = "Running\(queueText)"
                 if totalCount > 0 {
                     progress = Double(currentCount) / Double(totalCount)
                 } else {
@@ -293,46 +334,13 @@ class MenuBarManager: ObservableObject {
             
             progressView?.update(
                 progress: progress,
-                status: statusText,
+                status: progressStatusText,
                 count: currentCount,
                 total: totalCount > 0 ? totalCount : nil
             )
         } else {
             // Show regular text when not running
             statusMenuItem.view = nil
-            
-            let statusText: String
-            if isPaused {
-                statusText = "Status: Paused"
-            } else {
-                if let status = status {
-                    switch status {
-                    case .success:
-                        if passingCount > 0 || failingCount > 0 {
-                            statusText = "Status: \(passingCount) passed, \(failingCount) failed"
-                        } else {
-                            statusText = "Status: Success"
-                        }
-                    case .failed:
-                        if passingCount > 0 || failingCount > 0 {
-                            statusText = "Status: \(passingCount) passed, \(failingCount) failed"
-                        } else {
-                            statusText = "Status: Failed"
-                        }
-                    case .error:
-                        statusText = "Status: Error"
-                    case .warnings:
-                        statusText = "Status: Warnings"
-                    case .paused:
-                        statusText = "Status: Paused"
-                    default:
-                        statusText = "Status: Ready"
-                    }
-                } else {
-                    statusText = "Status: Ready"
-                }
-            }
-            statusMenuItem.title = statusText
         }
         
         // Update Run Tests Now / Cancel item
@@ -424,7 +432,7 @@ class ProgressMenuView: NSView {
     }
     
     func update(progress: Double, status: String, count: Int, total: Int?) {
-        if status == "Building" {
+        if status.hasPrefix("Building") {
             // Building phase - always show indeterminate progress
             progressBar.isIndeterminate = true
             progressBar.startAnimation(nil)
