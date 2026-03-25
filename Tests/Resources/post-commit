@@ -10,20 +10,8 @@
 # Example symlink:
 # ln -s /path/to/Tests.app/Contents/Resources/post-commit /path/to/repo/.git/hooks/post-commit
 
-# Ignore commits made from linked worktrees.
-GIT_DIR="$(git rev-parse --git-dir 2>/dev/null)"
-GIT_COMMON_DIR="$(git rev-parse --git-common-dir 2>/dev/null)"
-
-if [ -n "$GIT_DIR" ] && [ -n "$GIT_COMMON_DIR" ]; then
-    GIT_DIR_ABS="$(cd "$GIT_DIR" && pwd)"
-    GIT_COMMON_DIR_ABS="$(cd "$GIT_COMMON_DIR" && pwd)"
-
-    if [ "$GIT_DIR_ABS" != "$GIT_COMMON_DIR_ABS" ]; then
-        exit 0
-    fi
-fi
-
-# Ignore detached HEAD commits so intermediate scratch commits don't trigger runs.
+# Ignore detached HEAD commits so intermediate scratch commits don't trigger runs,
+# but allow normal branch commits from linked worktrees.
 BRANCH="$(git symbolic-ref --quiet --short HEAD 2>/dev/null)"
 if [ -z "$BRANCH" ]; then
     exit 0
@@ -55,4 +43,3 @@ fi
 "$CLI_PATH" trigger --branch "$BRANCH"
 
 exit 0
-
