@@ -644,16 +644,20 @@ class TestRunner: ObservableObject {
         let escapedScheme = shellEscape("Loopy Pro (macOS)")
         let escapedDestination = shellEscape("platform=macOS,arch=arm64")
         let escapedDerivedDataPath = shellEscape(workspaceBuildArtifactDirectory(in: workspaceDirectory).path)
+        let performanceArguments = Self.xcodebuildPerformanceArguments()
+            .map(shellEscape)
+            .joined(separator: " ")
         let parallelBuildArguments = xcodebuildParallelBuildArguments(from: SettingsStore.shared)
             .map(shellEscape)
             .joined(separator: " ")
         let parallelTestingArguments = xcodebuildParallelTestingArguments(from: SettingsStore.shared)
             .map(shellEscape)
             .joined(separator: " ")
+        let optionalPerformanceArguments = performanceArguments.isEmpty ? "" : " \(performanceArguments)"
         let optionalParallelBuildArguments = parallelBuildArguments.isEmpty ? "" : " \(parallelBuildArguments)"
         let optionalParallelArguments = parallelTestingArguments.isEmpty ? "" : " \(parallelTestingArguments)"
         let xcodebuildCommand = """
-        /usr/bin/xcodebuild -workspace \(escapedWorkspacePath) -scheme \(escapedScheme) -destination \(escapedDestination) -derivedDataPath \(escapedDerivedDataPath)\(optionalParallelBuildArguments)\(optionalParallelArguments) build-for-testing && /usr/bin/xcodebuild -workspace \(escapedWorkspacePath) -scheme \(escapedScheme) -destination \(escapedDestination) -derivedDataPath \(escapedDerivedDataPath)\(optionalParallelArguments) test-without-building
+        /usr/bin/xcodebuild -workspace \(escapedWorkspacePath) -scheme \(escapedScheme) -destination \(escapedDestination) -derivedDataPath \(escapedDerivedDataPath)\(optionalPerformanceArguments)\(optionalParallelBuildArguments)\(optionalParallelArguments) build-for-testing && /usr/bin/xcodebuild -workspace \(escapedWorkspacePath) -scheme \(escapedScheme) -destination \(escapedDestination) -derivedDataPath \(escapedDerivedDataPath)\(optionalPerformanceArguments)\(optionalParallelArguments) test-without-building
         """
         
         // Check if xcbeautify is available
@@ -1287,6 +1291,17 @@ class TestRunner: ObservableObject {
     static func xcodebuildParallelTestingArguments(enabled: Bool) -> [String] {
         guard enabled else { return [] }
         return ["-parallel-testing-enabled", "YES"]
+    }
+
+    static func xcodebuildPerformanceArguments() -> [String] {
+        [
+            "CODE_SIGNING_ALLOWED=NO",
+            "CODE_SIGNING_REQUIRED=NO",
+            "CODE_SIGN_IDENTITY=",
+            "COMPILER_INDEX_STORE_ENABLE=NO",
+            "DEBUG_INFORMATION_FORMAT=dwarf",
+            "ENABLE_MODULE_VERIFIER=NO"
+        ]
     }
 
     static func xcodebuildParallelBuildArguments(enabled: Bool, jobCount: Int) -> [String] {

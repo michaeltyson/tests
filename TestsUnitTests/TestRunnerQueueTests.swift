@@ -2,6 +2,20 @@ import XCTest
 @testable import Tests
 
 final class TestRunnerQueueTests: XCTestCase {
+    func testPerformanceArgumentsIncluded() {
+        XCTAssertEqual(
+            TestRunner.xcodebuildPerformanceArguments(),
+            [
+                "CODE_SIGNING_ALLOWED=NO",
+                "CODE_SIGNING_REQUIRED=NO",
+                "CODE_SIGN_IDENTITY=",
+                "COMPILER_INDEX_STORE_ENABLE=NO",
+                "DEBUG_INFORMATION_FORMAT=dwarf",
+                "ENABLE_MODULE_VERIFIER=NO"
+            ]
+        )
+    }
+
     func testParallelTestingArgumentsIncludedWhenEnabled() {
         XCTAssertEqual(
             TestRunner.xcodebuildParallelTestingArguments(enabled: true),
