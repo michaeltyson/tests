@@ -78,6 +78,12 @@ final class TestRunnerQueueTests: XCTestCase {
         )
     }
 
+    func testWorkspaceCleanupTriggeredWhenPreviousRefContainsWhitespace() {
+        XCTAssertTrue(
+            TestRunner.shouldCleanWorkspaceForRefChange(previousRef: " develop \n", nextRef: "release/2.1")
+        )
+    }
+
     func testSameBranchTriggerQueuesOnceAndRequestsCancellation() {
         let runner = TestRunner()
         runner.isRunning = true

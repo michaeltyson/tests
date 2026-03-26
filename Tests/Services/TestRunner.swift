@@ -193,6 +193,26 @@ class TestRunner: ObservableObject {
 
             if self.shouldStopBeforeLaunchingProcess() { return }
             
+            let shouldCleanForRefChange = Self.shouldCleanWorkspaceForRefChange(
+                previousRef: previousPreparedRef,
+                nextRef: branchToUse
+            )
+
+            if shouldCleanForRefChange {
+                DispatchQueue.main.async {
+                    self.output += "Branch changed from '\(previousPreparedRef ?? "unknown")' to '\(branchToUse)'. Cleaning workspace state...\n"
+                }
+                print("TestRunner: Branch changed from \(previousPreparedRef ?? "unknown") to \(branchToUse); cleaning disposable workspace state before checkout")
+                if !self.cleanWorkspaceStateSync(in: branchWorkspace) {
+                    self.abortRun(removeCurrentRun: true)
+                    self.showError(
+                        "Failed to clean workspace",
+                        message: "Could not remove stale workspace state before checking out the requested ref."
+                    )
+                    return
+                }
+            }
+
             // Checkout selected ref (branch or commit SHA)
             DispatchQueue.main.async {
                 self.output += "Checking out '\(branchToUse)'...\n"
@@ -207,20 +227,7 @@ class TestRunner: ObservableObject {
                 return
             }
 
-            if Self.shouldCleanWorkspaceForRefChange(previousRef: previousPreparedRef, nextRef: branchToUse) {
-                DispatchQueue.main.async {
-                    self.output += "Branch changed from '\(previousPreparedRef ?? "unknown")' to '\(branchToUse)'. Cleaning workspace state...\n"
-                }
-                print("TestRunner: Branch changed from \(previousPreparedRef ?? "unknown") to \(branchToUse); cleaning disposable workspace state before build")
-                if !self.cleanWorkspaceStateSync(in: branchWorkspace) {
-                    self.abortRun(removeCurrentRun: true)
-                    self.showError(
-                        "Failed to clean workspace",
-                        message: "Could not remove stale workspace state before building."
-                    )
-                    return
-                }
-            } else {
+            if !shouldCleanForRefChange {
                 DispatchQueue.main.async {
                     self.output += "Branch unchanged. Reusing existing build state...\n"
                 }
@@ -562,6 +569,11 @@ class TestRunner: ObservableObject {
     }
 
     private func cleanWorkspaceStateSync(in directory: URL) -> Bool {
+        let resetResult = runGitCommandSync(["reset", "--hard", "HEAD"], in: directory)
+        guard resetResult.success else {
+            return false
+        }
+
         let cleanResult = runGitCommandSync(["clean", "-ffd"], in: directory)
         guard cleanResult.success else {
             return false
