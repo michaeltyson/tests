@@ -21,7 +21,7 @@ struct TestHistoryView: View {
     private var sidebarTestRuns: [TestRun] {
         var runs = testResultStore.testRuns
         
-        if let currentTestRun = testRunner.currentTestRun {
+        if testRunner.isRunning, let currentTestRun = testRunner.currentTestRun {
             runs.removeAll { $0.id == currentTestRun.id }
             runs.insert(currentTestRun, at: 0)
         } else if testRunner.isRunning, let placeholder = runningPlaceholderTestRun {
