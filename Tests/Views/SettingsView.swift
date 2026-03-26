@@ -13,7 +13,6 @@ struct SettingsView: View {
     @State private var repositoryPath: String = ""
     @State private var branchName: String = ""
     @State private var parallelTestingEnabled: Bool = true
-    @State private var parallelBuildTargetsEnabled: Bool = true
     @State private var parallelBuildJobCount: Int = 6
     @State private var showAdvancedBuildSettings: Bool = false
     
@@ -54,11 +53,12 @@ struct SettingsView: View {
 
                 settingsCard(
                     title: "Build Parallelization",
-                    description: "Parallelize targets during the build-for-testing step."
+                    description: "Uses the active scheme or project defaults for target parallelization during build-for-testing."
                 ) {
                     VStack(alignment: .leading, spacing: 12) {
-                        Toggle("Parallelize targets", isOn: $parallelBuildTargetsEnabled)
-                            .toggleStyle(.switch)
+                        Label("Uses scheme and project defaults", systemImage: "link")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundColor(.secondary)
 
                         if showAdvancedBuildSettings {
                             HStack {
@@ -100,7 +100,6 @@ struct SettingsView: View {
             repositoryPath = settings.repositoryPath
             branchName = settings.branchName ?? ""
             parallelTestingEnabled = settings.parallelTestingEnabled
-            parallelBuildTargetsEnabled = settings.parallelBuildTargetsEnabled
             parallelBuildJobCount = settings.parallelBuildJobCount
             showAdvancedBuildSettings = NSApp.currentEvent?.modifierFlags.contains(.option) == true
         }
@@ -125,7 +124,6 @@ struct SettingsView: View {
         settings.setRepositoryPath(repositoryPath)
         settings.setBranchName(branchName.isEmpty ? nil : branchName)
         settings.setParallelTestingEnabled(parallelTestingEnabled)
-        settings.setParallelBuildTargetsEnabled(parallelBuildTargetsEnabled)
         settings.setParallelBuildJobCount(parallelBuildJobCount)
     }
 

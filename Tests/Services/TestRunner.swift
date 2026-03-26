@@ -9,6 +9,7 @@ import Foundation
 import Combine
 import AppKit
 import UserNotifications
+import RegexBuilder
 
 class TestRunner: ObservableObject {
     @Published var isRunning = false
@@ -288,8 +289,6 @@ class TestRunner: ObservableObject {
     func cancel() {
         print("TestRunner: Canceling tests")
         isCancelled = true
-        pendingRuns.removeAll()
-        queuedRunCount = 0
         
         // Delete the test run from history if it was already saved
         if let testRun = currentTestRun {
@@ -659,7 +658,12 @@ class TestRunner: ObservableObject {
         let performanceArguments = Self.xcodebuildPerformanceArguments()
             .map(shellEscape)
             .joined(separator: " ")
-        let parallelBuildArguments = xcodebuildParallelBuildArguments(from: SettingsStore.shared)
+        let parallelBuildArguments = xcodebuildParallelBuildArguments(
+            workspaceURL: workspaceURL,
+            workspaceDirectory: workspaceDirectory,
+            schemeName: "Loopy Pro (macOS)",
+            settings: SettingsStore.shared
+        )
             .map(shellEscape)
             .joined(separator: " ")
         let parallelTestingArguments = xcodebuildParallelTestingArguments(from: SettingsStore.shared)
@@ -1321,6 +1325,22 @@ class TestRunner: ObservableObject {
         return ["-parallelizeTargets", "-jobs", String(max(1, jobCount))]
     }
 
+    static func schemeParallelizeBuildablesSetting(from contents: String) -> Bool? {
+        let pattern = /parallelizeBuildables\s*=\s*"(?<value>YES|NO)"/
+        guard let match = contents.firstMatch(of: pattern) else {
+            return nil
+        }
+        return match.output.value == "YES"
+    }
+
+    static func projectParallelizationSetting(from contents: String) -> Bool? {
+        let pattern = /BuildIndependentTargetsInParallel\s*=\s*(?<value>YES|NO);/
+        guard let match = contents.firstMatch(of: pattern) else {
+            return nil
+        }
+        return match.output.value == "YES"
+    }
+
     static let workspaceBuildArtifactDirectoryNames = [".DerivedData", "DerivedData", "build"]
 
     static func workspaceBuildArtifactDirectory(in workspaceDirectory: URL) -> URL {
@@ -1342,11 +1362,102 @@ class TestRunner: ObservableObject {
         Self.xcodebuildParallelTestingArguments(enabled: settings.parallelTestingEnabled)
     }
 
-    private func xcodebuildParallelBuildArguments(from settings: SettingsStore) -> [String] {
+    private func xcodebuildParallelBuildArguments(
+        workspaceURL: URL,
+        workspaceDirectory: URL,
+        schemeName: String,
+        settings: SettingsStore
+    ) -> [String] {
         Self.xcodebuildParallelBuildArguments(
-            enabled: settings.parallelBuildTargetsEnabled,
+            enabled: buildParallelizationEnabled(
+                workspaceURL: workspaceURL,
+                workspaceDirectory: workspaceDirectory,
+                schemeName: schemeName
+            ),
             jobCount: settings.parallelBuildJobCount
         )
+    }
+
+    private func buildParallelizationEnabled(
+        workspaceURL: URL,
+        workspaceDirectory: URL,
+        schemeName: String
+    ) -> Bool {
+        if let schemeValue = loadSchemeParallelizationSetting(
+            workspaceURL: workspaceURL,
+            workspaceDirectory: workspaceDirectory,
+            schemeName: schemeName
+        ) {
+            return schemeValue
+        }
+
+        if let projectValue = loadProjectParallelizationSetting(
+            workspaceURL: workspaceURL,
+            workspaceDirectory: workspaceDirectory
+        ) {
+            return projectValue
+        }
+
+        return true
+    }
+
+    private func loadSchemeParallelizationSetting(
+        workspaceURL: URL,
+        workspaceDirectory: URL,
+        schemeName: String
+    ) -> Bool? {
+        let candidateRoots = [workspaceURL.deletingLastPathComponent(), workspaceDirectory]
+        for root in candidateRoots {
+            guard let enumerator = fileManager.enumerator(
+                at: root,
+                includingPropertiesForKeys: [.isRegularFileKey],
+                options: [.skipsHiddenFiles]
+            ) else {
+                continue
+            }
+
+            for case let fileURL as URL in enumerator {
+                guard
+                    fileURL.lastPathComponent == "\(schemeName).xcscheme",
+                    let contents = try? String(contentsOf: fileURL),
+                    let value = Self.schemeParallelizeBuildablesSetting(from: contents)
+                else {
+                    continue
+                }
+                return value
+            }
+        }
+
+        return nil
+    }
+
+    private func loadProjectParallelizationSetting(
+        workspaceURL: URL,
+        workspaceDirectory: URL
+    ) -> Bool? {
+        let candidateRoots = [workspaceURL.deletingLastPathComponent(), workspaceDirectory]
+        for root in candidateRoots {
+            guard let enumerator = fileManager.enumerator(
+                at: root,
+                includingPropertiesForKeys: [.isRegularFileKey],
+                options: [.skipsHiddenFiles]
+            ) else {
+                continue
+            }
+
+            for case let fileURL as URL in enumerator {
+                guard
+                    fileURL.lastPathComponent == "project.pbxproj",
+                    let contents = try? String(contentsOf: fileURL),
+                    let value = Self.projectParallelizationSetting(from: contents)
+                else {
+                    continue
+                }
+                return value
+            }
+        }
+
+        return nil
     }
 
     private func workspaceBuildArtifactDirectory(in workspaceDirectory: URL) -> URL {

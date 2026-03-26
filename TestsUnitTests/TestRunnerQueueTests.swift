@@ -44,6 +44,46 @@ final class TestRunnerQueueTests: XCTestCase {
         )
     }
 
+    func testSchemeParallelizeBuildablesSettingReadsYes() {
+        let contents = """
+        <BuildAction
+           parallelizeBuildables = "YES"
+           buildImplicitDependencies = "YES">
+        """
+
+        XCTAssertEqual(TestRunner.schemeParallelizeBuildablesSetting(from: contents), true)
+    }
+
+    func testSchemeParallelizeBuildablesSettingReadsNo() {
+        let contents = """
+        <BuildAction
+           parallelizeBuildables = "NO"
+           buildImplicitDependencies = "YES">
+        """
+
+        XCTAssertEqual(TestRunner.schemeParallelizeBuildablesSetting(from: contents), false)
+    }
+
+    func testProjectParallelizationSettingReadsYes() {
+        let contents = """
+        attributes = {
+            BuildIndependentTargetsInParallel = YES;
+        };
+        """
+
+        XCTAssertEqual(TestRunner.projectParallelizationSetting(from: contents), true)
+    }
+
+    func testProjectParallelizationSettingReadsNo() {
+        let contents = """
+        attributes = {
+            BuildIndependentTargetsInParallel = NO;
+        };
+        """
+
+        XCTAssertEqual(TestRunner.projectParallelizationSetting(from: contents), false)
+    }
+
     func testWorkspaceBuildArtifactDirectoryUsesLocalDerivedDataFolder() {
         let workspaceURL = URL(fileURLWithPath: "/tmp/LoopyWorkspace", isDirectory: true)
 
@@ -129,6 +169,22 @@ final class TestRunnerQueueTests: XCTestCase {
 
         XCTAssertEqual(runner.queuedRunCount, 2)
         XCTAssertEqual(runner.queuedRunBranchesForTesting, ["release", "hotfix"])
+    }
+
+    func testCancelPreservesQueuedRuns() {
+        let runner = TestRunner()
+        runner.isRunning = true
+        var current = TestRun(status: .running)
+        current.branchName = "develop"
+        runner.currentTestRun = current
+
+        XCTAssertEqual(runner.dispatchIncomingRun(branchName: "release", isManualRun: false), .queued)
+        XCTAssertEqual(runner.queuedRunCount, 1)
+
+        runner.cancel()
+
+        XCTAssertEqual(runner.queuedRunCount, 1)
+        XCTAssertEqual(runner.queuedRunBranchesForTesting, ["release"])
     }
 
     func testIdleRunnerReturnsStartNow() {

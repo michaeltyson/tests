@@ -15,8 +15,11 @@ class SettingsStore: ObservableObject {
         static let repositoryPath = "repositoryPath"
         static let branchName = "branchName"
         static let parallelTestingEnabled = "parallelTestingEnabled"
-        static let parallelBuildTargetsEnabled = "parallelBuildTargetsEnabled"
         static let parallelBuildJobCount = "parallelBuildJobCount"
+    }
+
+    private static func sanitizedParallelBuildJobCount(_ value: Int) -> Int {
+        max(1, value)
     }
     
     @Published var repositoryPath: String {
@@ -41,15 +44,8 @@ class SettingsStore: ObservableObject {
         }
     }
 
-    @Published var parallelBuildTargetsEnabled: Bool {
-        didSet {
-            UserDefaults.standard.set(parallelBuildTargetsEnabled, forKey: Keys.parallelBuildTargetsEnabled)
-        }
-    }
-
     @Published var parallelBuildJobCount: Int {
         didSet {
-            parallelBuildJobCount = max(1, parallelBuildJobCount)
             UserDefaults.standard.set(parallelBuildJobCount, forKey: Keys.parallelBuildJobCount)
         }
     }
@@ -58,9 +54,8 @@ class SettingsStore: ObservableObject {
         self.repositoryPath = UserDefaults.standard.string(forKey: Keys.repositoryPath) ?? ""
         self.branchName = UserDefaults.standard.string(forKey: Keys.branchName)
         self.parallelTestingEnabled = UserDefaults.standard.object(forKey: Keys.parallelTestingEnabled) as? Bool ?? true
-        self.parallelBuildTargetsEnabled = UserDefaults.standard.object(forKey: Keys.parallelBuildTargetsEnabled) as? Bool ?? true
         let storedParallelBuildJobCount = UserDefaults.standard.object(forKey: Keys.parallelBuildJobCount) as? Int ?? 6
-        self.parallelBuildJobCount = max(1, storedParallelBuildJobCount)
+        self.parallelBuildJobCount = Self.sanitizedParallelBuildJobCount(storedParallelBuildJobCount)
     }
     
     func setRepositoryPath(_ path: String) {
@@ -75,12 +70,8 @@ class SettingsStore: ObservableObject {
         parallelTestingEnabled = enabled
     }
 
-    func setParallelBuildTargetsEnabled(_ enabled: Bool) {
-        parallelBuildTargetsEnabled = enabled
-    }
-
     func setParallelBuildJobCount(_ jobCount: Int) {
-        parallelBuildJobCount = jobCount
+        parallelBuildJobCount = Self.sanitizedParallelBuildJobCount(jobCount)
     }
     
     var isConfigured: Bool {
