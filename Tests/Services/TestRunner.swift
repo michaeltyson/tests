@@ -11,6 +11,15 @@ import AppKit
 import UserNotifications
 import RegexBuilder
 
+enum TestUserNotification {
+    static let startCategoryIdentifier = "TEST_STARTED"
+    static let failureCategoryIdentifier = "TEST_FAILURE"
+    static let errorCategoryIdentifier = "TEST_ERROR"
+
+    static let cancelActionIdentifier = "CANCEL_TESTS"
+    static let openReportsActionIdentifier = "OPEN_REPORTS"
+}
+
 class TestRunner: ObservableObject {
     @Published var isRunning = false
     @Published var isPaused = false
@@ -1282,14 +1291,19 @@ class TestRunner: ObservableObject {
     func killAllProcesses() {
         killCurrentProcess()
     }
-    
-    private func sendTestStartNotification(branchName: String) {
-        let center = UNUserNotificationCenter.current()
-        
+
+    static func testStartNotificationContent(branchName: String) -> UNMutableNotificationContent {
         let content = UNMutableNotificationContent()
         content.title = "Tests Started"
         content.body = "Running tests on branch: \(branchName)"
         content.sound = .default
+        content.categoryIdentifier = TestUserNotification.startCategoryIdentifier
+        return content
+    }
+    
+    private func sendTestStartNotification(branchName: String) {
+        let center = UNUserNotificationCenter.current()
+        let content = Self.testStartNotificationContent(branchName: branchName)
         
         let request = UNNotificationRequest(
             identifier: UUID().uuidString,

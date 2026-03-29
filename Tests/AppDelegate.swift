@@ -10,7 +10,7 @@ import SwiftUI
 import Combine
 import UserNotifications
 
-class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUserNotificationCenterDelegate {
     let testRunner = TestRunner()
     let testResultStore = TestResultStore()
     var historyWindow: NSWindow?
@@ -32,6 +32,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     
     private func requestNotificationPermissions() {
         let center = UNUserNotificationCenter.current()
+        center.delegate = self
+        center.setNotificationCategories(Self.notificationCategories())
         // Request standard notification permissions (criticalAlert requires special entitlements)
         center.requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
             if let error = error {
@@ -253,6 +255,64 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc func handleCancelTestsNotification() {
         print("AppDelegate: Received CancelTests notification from menu bar")
         testRunner.cancel()
+    }
+
+    static func notificationCategories() -> Set<UNNotificationCategory> {
+        let openReportsAction = UNNotificationAction(
+            identifier: TestUserNotification.openReportsActionIdentifier,
+            title: "Open Reports",
+            options: [.foreground]
+        )
+
+        let cancelTestsAction = UNNotificationAction(
+            identifier: TestUserNotification.cancelActionIdentifier,
+            title: "Cancel Test",
+            options: [.destructive]
+        )
+
+        let startCategory = UNNotificationCategory(
+            identifier: TestUserNotification.startCategoryIdentifier,
+            actions: [cancelTestsAction, openReportsAction],
+            intentIdentifiers: [],
+            options: []
+        )
+
+        let failureCategory = UNNotificationCategory(
+            identifier: TestUserNotification.failureCategoryIdentifier,
+            actions: [openReportsAction],
+            intentIdentifiers: [],
+            options: []
+        )
+
+        let errorCategory = UNNotificationCategory(
+            identifier: TestUserNotification.errorCategoryIdentifier,
+            actions: [openReportsAction],
+            intentIdentifiers: [],
+            options: []
+        )
+
+        return [startCategory, failureCategory, errorCategory]
+    }
+
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
+        defer { completionHandler() }
+
+        switch response.actionIdentifier {
+        case TestUserNotification.cancelActionIdentifier:
+            DispatchQueue.main.async { [weak self] in
+                self?.handleCancelTestsNotification()
+            }
+        case TestUserNotification.openReportsActionIdentifier, UNNotificationDefaultActionIdentifier:
+            DispatchQueue.main.async { [weak self] in
+                self?.showHistoryWindow()
+            }
+        default:
+            break
+        }
     }
     
     @objc func showHistoryWindow() {

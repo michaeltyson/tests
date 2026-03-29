@@ -196,4 +196,26 @@ final class TestRunnerQueueTests: XCTestCase {
         XCTAssertEqual(runner.queuedRunCount, 0)
         XCTAssertEqual(runner.queuedRunBranchesForTesting, [])
     }
+
+    func testStartNotificationContentUsesInteractiveCategory() {
+        let content = TestRunner.testStartNotificationContent(branchName: "develop")
+
+        XCTAssertEqual(content.title, "Tests Started")
+        XCTAssertEqual(content.body, "Running tests on branch: develop")
+        XCTAssertEqual(content.categoryIdentifier, TestUserNotification.startCategoryIdentifier)
+    }
+
+    func testNotificationCategoriesIncludeStartActions() {
+        let categories = AppDelegate.notificationCategories()
+        let startCategory = categories.first { $0.identifier == TestUserNotification.startCategoryIdentifier }
+
+        XCTAssertNotNil(startCategory)
+        XCTAssertEqual(
+            startCategory?.actions.map(\.identifier),
+            [
+                TestUserNotification.cancelActionIdentifier,
+                TestUserNotification.openReportsActionIdentifier
+            ]
+        )
+    }
 }
