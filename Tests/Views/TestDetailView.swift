@@ -384,11 +384,18 @@ struct TestDetailView: View {
 struct TerminalOutputView: NSViewRepresentable {
     let text: String
     let failureRanges: [NSRange]
+    let followsTail: Bool
     @Binding var currentFailureIndex: Int
     
-    init(text: String, failureRanges: [NSRange] = [], currentFailureIndex: Binding<Int> = .constant(-1)) {
+    init(
+        text: String,
+        failureRanges: [NSRange] = [],
+        followsTail: Bool = false,
+        currentFailureIndex: Binding<Int> = .constant(-1)
+    ) {
         self.text = text
         self.failureRanges = failureRanges
+        self.followsTail = followsTail
         self._currentFailureIndex = currentFailureIndex
     }
     
@@ -446,6 +453,7 @@ struct TerminalOutputView: NSViewRepresentable {
         context.coordinator.frameObserver = observer
         context.coordinator.textView = textView
         context.coordinator.scrollView = scrollView
+        context.coordinator.followsTail = followsTail
         
         // Add key event monitoring for copy command (needed for menu bar apps)
         let monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak textView, weak coordinator = context.coordinator] event -> NSEvent? in
@@ -466,6 +474,9 @@ struct TerminalOutputView: NSViewRepresentable {
         // Update width after initial layout
         DispatchQueue.main.async {
             updateTextViewWidth(textView: textView, scrollView: scrollView)
+            if followsTail {
+                scrollToBottom(textView: textView, scrollView: scrollView)
+            }
         }
         
         return scrollView
@@ -479,6 +490,7 @@ struct TerminalOutputView: NSViewRepresentable {
         context.coordinator.scrollView = nsView
         context.coordinator.failureRanges = failureRanges
         context.coordinator.currentFailureIndex = currentFailureIndex
+        context.coordinator.followsTail = followsTail
         
         // Update width to match scroll view
         updateTextViewWidth(textView: textView, scrollView: nsView)
@@ -498,7 +510,7 @@ struct TerminalOutputView: NSViewRepresentable {
         updateTextViewLayout(textView: textView, scrollView: nsView)
         
         // Auto-scroll to bottom if user was already there
-        if isAtBottom {
+        if followsTail && isAtBottom {
             scrollToBottom(textView: textView, scrollView: nsView)
         }
     }
@@ -559,7 +571,8 @@ struct TerminalOutputView: NSViewRepresentable {
             let documentRect = textView.bounds
             let visibleRect = clipView.bounds
             let maxY = max(0, documentRect.height - visibleRect.height)
-            clipView.setBoundsOrigin(NSPoint(x: 0, y: maxY))
+            clipView.scroll(to: NSPoint(x: 0, y: maxY))
+            scrollView.reflectScrolledClipView(clipView)
         }
     }
     
@@ -573,6 +586,7 @@ struct TerminalOutputView: NSViewRepresentable {
         var scrollView: NSScrollView?
         var failureRanges: [NSRange] = []
         var currentFailureIndex: Int = -1
+        var followsTail = false
         
         override init() {
             super.init()
@@ -674,7 +688,7 @@ struct TerminalOutputView: NSViewRepresentable {
     }
     
     static func == (lhs: TerminalOutputView, rhs: TerminalOutputView) -> Bool {
-        return lhs.text == rhs.text
+        return lhs.text == rhs.text && lhs.followsTail == rhs.followsTail
     }
     
     private func parseANSI(_ text: String, failureRanges: [NSRange] = []) -> NSAttributedString {

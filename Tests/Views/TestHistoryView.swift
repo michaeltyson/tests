@@ -167,7 +167,7 @@ struct TestHistoryView: View {
                    selectedTestRun?.id == currentTestRun.id {
                     // Show live output for the currently running test (only if it's selected)
                     VStack(alignment: .leading, spacing: 0) {
-                        TerminalOutputView(text: testRunner.output)
+                        TerminalOutputView(text: testRunner.output, followsTail: true)
                             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
                             .modifier(OutputPaneModifier())
                     }
