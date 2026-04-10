@@ -262,6 +262,28 @@ class TestRunner: ObservableObject {
             print("TestRunner: Found workspace: \(workspaceURL.path)")
 
             if self.shouldStopBeforeLaunchingProcess() { return }
+
+            let preBuildScript = settings.preBuildScript.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !preBuildScript.isEmpty {
+                DispatchQueue.main.async {
+                    self.output += "Running pre-build script...\n"
+                }
+                print("TestRunner: Running configured pre-build script")
+                let preBuildResult = self.runShellScriptSync(
+                    preBuildScript,
+                    in: branchWorkspace,
+                    label: "pre-build script"
+                )
+                if !preBuildResult.success {
+                    let detail = preBuildResult.output.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let message = detail.isEmpty
+                        ? "The configured pre-build script exited with status \(preBuildResult.terminationStatus)."
+                        : "The configured pre-build script exited with status \(preBuildResult.terminationStatus).\n\nOutput:\n\(detail)"
+                    self.abortRun(removeCurrentRun: true)
+                    self.showError("Pre-build script failed", message: message)
+                    return
+                }
+            }
             
             // Run tests on main thread
             DispatchQueue.main.async {
@@ -347,6 +369,12 @@ class TestRunner: ObservableObject {
         let success: Bool
         let output: String
     }
+
+    private struct ShellCommandResult {
+        let success: Bool
+        let output: String
+        let terminationStatus: Int32
+    }
     
     @discardableResult
     private func runGitCommandSync(
@@ -393,6 +421,58 @@ class TestRunner: ObservableObject {
                 self?.output += "\(message)\n"
             }
             return GitCommandResult(success: false, output: message)
+        }
+    }
+
+    @discardableResult
+    private func runShellScriptSync(
+        _ script: String,
+        in directory: URL,
+        label: String
+    ) -> ShellCommandResult {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        process.arguments = ["-lc", script]
+        process.currentDirectoryURL = directory
+
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            let outputString = String(data: data, encoding: .utf8) ?? ""
+
+            if !outputString.isEmpty {
+                DispatchQueue.main.async { [weak self] in
+                    self?.output += outputString
+                }
+            }
+
+            let success = process.terminationStatus == 0
+            if !success {
+                let trimmedOutput = outputString.trimmingCharacters(in: .whitespacesAndNewlines)
+                print("TestRunner: \(label) failed with exit status \(process.terminationStatus)")
+                if !trimmedOutput.isEmpty {
+                    print("TestRunner: \(label) output: \(trimmedOutput)")
+                }
+            }
+
+            return ShellCommandResult(
+                success: success,
+                output: outputString,
+                terminationStatus: process.terminationStatus
+            )
+        } catch {
+            let message = "Failed to run \(label): \(error.localizedDescription)"
+            print("TestRunner: \(message)")
+            DispatchQueue.main.async { [weak self] in
+                self?.output += "\(message)\n"
+            }
+            return ShellCommandResult(success: false, output: message, terminationStatus: -1)
         }
     }
     

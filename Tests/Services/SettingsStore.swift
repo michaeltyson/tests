@@ -16,6 +16,7 @@ class SettingsStore: ObservableObject {
         static let branchName = "branchName"
         static let parallelTestingEnabled = "parallelTestingEnabled"
         static let parallelBuildJobCount = "parallelBuildJobCount"
+        static let preBuildScript = "preBuildScript"
     }
 
     private static func sanitizedParallelBuildJobCount(_ value: Int) -> Int {
@@ -49,6 +50,17 @@ class SettingsStore: ObservableObject {
             UserDefaults.standard.set(parallelBuildJobCount, forKey: Keys.parallelBuildJobCount)
         }
     }
+
+    @Published var preBuildScript: String {
+        didSet {
+            let trimmedScript = preBuildScript.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmedScript.isEmpty {
+                UserDefaults.standard.removeObject(forKey: Keys.preBuildScript)
+            } else {
+                UserDefaults.standard.set(preBuildScript, forKey: Keys.preBuildScript)
+            }
+        }
+    }
     
     private init() {
         self.repositoryPath = UserDefaults.standard.string(forKey: Keys.repositoryPath) ?? ""
@@ -56,6 +68,7 @@ class SettingsStore: ObservableObject {
         self.parallelTestingEnabled = UserDefaults.standard.object(forKey: Keys.parallelTestingEnabled) as? Bool ?? true
         let storedParallelBuildJobCount = UserDefaults.standard.object(forKey: Keys.parallelBuildJobCount) as? Int ?? 6
         self.parallelBuildJobCount = Self.sanitizedParallelBuildJobCount(storedParallelBuildJobCount)
+        self.preBuildScript = UserDefaults.standard.string(forKey: Keys.preBuildScript) ?? ""
     }
     
     func setRepositoryPath(_ path: String) {
@@ -72,6 +85,10 @@ class SettingsStore: ObservableObject {
 
     func setParallelBuildJobCount(_ jobCount: Int) {
         parallelBuildJobCount = Self.sanitizedParallelBuildJobCount(jobCount)
+    }
+
+    func setPreBuildScript(_ script: String) {
+        preBuildScript = script
     }
     
     var isConfigured: Bool {

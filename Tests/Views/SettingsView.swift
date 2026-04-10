@@ -14,6 +14,7 @@ struct SettingsView: View {
     @State private var branchName: String = ""
     @State private var parallelTestingEnabled: Bool = true
     @State private var parallelBuildJobCount: Int = 6
+    @State private var preBuildScript: String = ""
     @State private var showAdvancedBuildSettings: Bool = false
     
     var body: some View {
@@ -77,6 +78,15 @@ struct SettingsView: View {
                 }
             }
 
+            settingsCard(
+                title: "Pre-Build Script",
+                description: "Optional shell script to run in the prepared workspace before the build starts. A non-zero exit code cancels the run."
+            ) {
+                TextField("Shell script", text: $preBuildScript)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(.body, design: .monospaced))
+            }
+
             HStack {
                 Spacer()
                 Button("Cancel") {
@@ -101,6 +111,7 @@ struct SettingsView: View {
             branchName = settings.branchName ?? ""
             parallelTestingEnabled = settings.parallelTestingEnabled
             parallelBuildJobCount = settings.parallelBuildJobCount
+            preBuildScript = settings.preBuildScript
             showAdvancedBuildSettings = NSApp.currentEvent?.modifierFlags.contains(.option) == true
         }
     }
@@ -125,6 +136,7 @@ struct SettingsView: View {
         settings.setBranchName(branchName.isEmpty ? nil : branchName)
         settings.setParallelTestingEnabled(parallelTestingEnabled)
         settings.setParallelBuildJobCount(parallelBuildJobCount)
+        settings.setPreBuildScript(preBuildScript)
     }
 
     private var header: some View {

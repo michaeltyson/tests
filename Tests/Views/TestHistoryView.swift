@@ -252,6 +252,12 @@ struct TestHistoryView: View {
     }
     
     private func deleteTestRun(_ testRun: TestRun) {
+        if testRunner.isRunning,
+           testRunner.currentTestRun?.id == testRun.id || runningPlaceholderTestRun?.id == testRun.id {
+            NotificationCenter.default.post(name: NSNotification.Name("CancelTests"), object: nil)
+            return
+        }
+        
         testResultStore.delete(testRun)
         if selectedTestRun?.id == testRun.id {
             selectedTestRun = nil
