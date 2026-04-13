@@ -40,9 +40,14 @@ class TestRunner: ObservableObject {
     private var errorPipe: Pipe?
     private var outputHandle: FileHandle?
     private var errorHandle: FileHandle?
+    private var watchdogTimer: DispatchSourceTimer?
+    private var testPhaseStartedAt: Date?
+    private var lastTestProgressAt: Date?
+    private var watchdogTerminationInfo: WatchdogTerminationInfo?
     private var cancellables = Set<AnyCancellable>()
     private var isCancelled = false
     private let setupQueue = DispatchQueue(label: "com.atastypixel.Tests.setupQueue", qos: .userInitiated)
+    private let watchdogQueue = DispatchQueue(label: "com.atastypixel.Tests.watchdogQueue", qos: .utility)
     private var pendingRuns: [PendingRunRequest] = []
     private var activeBranchName: String?
     
@@ -51,10 +56,21 @@ class TestRunner: ObservableObject {
     
     private static let totalCountKey = "com.atastypixel.Tests.lastTotalCount"
     private static let lastPreparedWorkspaceRefKey = "com.atastypixel.Tests.lastPreparedWorkspaceRef"
+    private static let defaultWatchdogCheckInterval: TimeInterval = 15
 
     private struct PendingRunRequest {
         let branchName: String
         let isManualRun: Bool
+    }
+
+    private struct WatchdogTerminationInfo {
+        let summary: String
+    }
+
+    private struct ProcessSnapshot {
+        let pid: Int32
+        let parentPID: Int32
+        let command: String
     }
 
     enum RunDispatchAction: Equatable {
@@ -320,6 +336,7 @@ class TestRunner: ObservableObject {
     func cancel() {
         print("TestRunner: Canceling tests")
         isCancelled = true
+        invalidateWatchdog()
         
         // Delete the test run from history if it was already saved
         if let testRun = currentTestRun {
@@ -363,6 +380,7 @@ class TestRunner: ObservableObject {
         errorHandle?.readabilityHandler = nil
         outputHandle = nil
         errorHandle = nil
+        invalidateWatchdog()
     }
     
     private struct GitCommandResult {
@@ -374,6 +392,36 @@ class TestRunner: ObservableObject {
         let success: Bool
         let output: String
         let terminationStatus: Int32
+    }
+
+    @discardableResult
+    private func runCommandSync(_ executablePath: String, arguments: [String]) -> ShellCommandResult {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executablePath)
+        process.arguments = arguments
+
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            let outputString = String(data: data, encoding: .utf8) ?? ""
+            return ShellCommandResult(
+                success: process.terminationStatus == 0,
+                output: outputString,
+                terminationStatus: process.terminationStatus
+            )
+        } catch {
+            return ShellCommandResult(
+                success: false,
+                output: "Failed to run \(executablePath): \(error.localizedDescription)",
+                terminationStatus: -1
+            )
+        }
     }
     
     @discardableResult
@@ -627,6 +675,7 @@ class TestRunner: ObservableObject {
     
     private func abortRun(removeCurrentRun: Bool) {
         DispatchQueue.main.async {
+            self.invalidateWatchdog()
             self.isRunning = false
             self.isBuilding = false
             self.activeBranchName = nil
@@ -925,6 +974,7 @@ class TestRunner: ObservableObject {
         
         process.terminationHandler = { [weak self] process in
             guard let self = self else { return }
+            self.invalidateWatchdog()
             
             // Stop reading
             self.outputHandle?.readabilityHandler = nil
@@ -988,10 +1038,11 @@ class TestRunner: ObservableObject {
                     if countedTotal > 0 {
                         UserDefaults.standard.set(countedTotal, forKey: Self.totalCountKey)
                     }
-                    
-                    // Parse output for status (check for xcbeautify formatted output too)
-                    // Determine status based on counts and output content
-                    if finalOutput.contains("error:") || finalOutput.contains("*** Terminating") || finalOutput.contains("❌") {
+
+                    if let watchdogTerminationInfo = self.watchdogTerminationInfo {
+                        testRun.status = .error
+                        testRun.errorDescription = watchdogTerminationInfo.summary
+                    } else if finalOutput.contains("error:") || finalOutput.contains("*** Terminating") || finalOutput.contains("❌") {
                         testRun.status = .error
                         testRun.errorDescription = self.extractError(from: finalOutput)
                     } else if finalOutput.contains("** BUILD FAILED **") || finalOutput.contains("BUILD FAILED") {
@@ -1012,6 +1063,7 @@ class TestRunner: ObservableObject {
                     // Send notification that tests have completed
                     self.sendTestCompletionNotification(testRun: testRun)
                 }
+                self.watchdogTerminationInfo = nil
                 self.startNextQueuedRunIfNeeded()
             }
         }
@@ -1046,6 +1098,7 @@ class TestRunner: ObservableObject {
     }
 
     private func prepareForRunStart() {
+        invalidateWatchdog()
         isRunning = true
         output = ""
 
@@ -1061,6 +1114,9 @@ class TestRunner: ObservableObject {
         passedTestNames.removeAll()
         failedTestNames.removeAll()
         isBuilding = true // Start in building phase
+        testPhaseStartedAt = nil
+        lastTestProgressAt = nil
+        watchdogTerminationInfo = nil
         currentTestRun = nil
     }
 
@@ -1217,6 +1273,7 @@ class TestRunner: ObservableObject {
             // We've entered the test phase
             if isBuilding {
                 isBuilding = false
+                recordTestProgress()
             }
         } else if foundBuildPhase && isRunning {
             // We're still in build phase (only set if running)
@@ -1274,6 +1331,7 @@ class TestRunner: ObservableObject {
                         passedTestNames.insert(name)
                         passingCount = passedTestNames.count
                         failingCount = failedTestNames.count
+                        recordTestProgress()
                         updateCurrentTestRunCounts()
                     }
                 } else if isFailed {
@@ -1281,6 +1339,7 @@ class TestRunner: ObservableObject {
                         // Only count as failed if not already passed
                         failedTestNames.insert(name)
                         failingCount = failedTestNames.count
+                        recordTestProgress()
                         updateCurrentTestRunCounts()
                     }
                 }
@@ -1367,6 +1426,220 @@ class TestRunner: ObservableObject {
             currentTestRun = testRun
         }
     }
+
+    private func recordTestProgress(at now: Date = Date()) {
+        guard isRunning, !isBuilding else { return }
+
+        if testPhaseStartedAt == nil {
+            testPhaseStartedAt = now
+        }
+        lastTestProgressAt = now
+        scheduleWatchdogIfNeeded()
+    }
+
+    private func scheduleWatchdogIfNeeded() {
+        guard watchdogTimer == nil else { return }
+
+        let timer = DispatchSource.makeTimerSource(queue: watchdogQueue)
+        timer.schedule(deadline: .now() + Self.defaultWatchdogCheckInterval, repeating: Self.defaultWatchdogCheckInterval)
+        timer.setEventHandler { [weak self] in
+            DispatchQueue.main.async {
+                self?.evaluateWatchdog()
+            }
+        }
+        watchdogTimer = timer
+        timer.resume()
+    }
+
+    private func invalidateWatchdog() {
+        watchdogTimer?.setEventHandler {}
+        watchdogTimer?.cancel()
+        watchdogTimer = nil
+        testPhaseStartedAt = nil
+        lastTestProgressAt = nil
+    }
+
+    private func evaluateWatchdog(now: Date = Date()) {
+        let timeout = Self.xcodebuildTestInactivityTimeoutInterval(from: SettingsStore.shared)
+        guard
+            Self.watchdogShouldTrigger(
+                isBuilding: isBuilding,
+                testPhaseStartedAt: testPhaseStartedAt,
+                lastProgressAt: lastTestProgressAt,
+                now: now,
+                timeout: timeout
+            )
+        else {
+            return
+        }
+
+        let summary = Self.watchdogTimeoutDescription(
+            now: now,
+            testPhaseStartedAt: testPhaseStartedAt,
+            lastProgressAt: lastTestProgressAt,
+            timeout: timeout,
+            passingCount: passingCount,
+            failingCount: failingCount,
+            totalCount: totalCount
+        )
+        handleWatchdogTimeout(summary: summary)
+    }
+
+    private func handleWatchdogTimeout(summary: String) {
+        guard watchdogTerminationInfo == nil else { return }
+
+        watchdogTerminationInfo = WatchdogTerminationInfo(summary: summary)
+        invalidateWatchdog()
+
+        if var testRun = currentTestRun {
+            testRun.status = .error
+            testRun.errorDescription = summary
+            currentTestRun = testRun
+        }
+
+        let rootProcessIDs = trackedRootProcessIDs()
+        watchdogQueue.async { [weak self] in
+            guard let self = self else { return }
+            let diagnostics = self.collectWatchdogDiagnostics(summary: summary, rootProcessIDs: rootProcessIDs)
+            DispatchQueue.main.async {
+                guard self.watchdogTerminationInfo != nil else { return }
+
+                if !diagnostics.isEmpty {
+                    self.output += "\n\(diagnostics)\n"
+                }
+
+                if var testRun = self.currentTestRun {
+                    testRun.status = .error
+                    testRun.errorDescription = summary
+                    self.currentTestRun = testRun
+                }
+
+                self.terminateProcessesForWatchdogTimeout(rootProcessIDs: rootProcessIDs)
+            }
+        }
+    }
+
+    private func terminateProcessesForWatchdogTimeout(rootProcessIDs: [Int32]) {
+        process?.terminate()
+        xcodebuildProcess?.terminate()
+
+        let knownProcessIDs = Set(rootProcessIDs + collectProcessTree(rootProcessIDs: rootProcessIDs).map(\.pid))
+        guard !knownProcessIDs.isEmpty else { return }
+
+        watchdogQueue.asyncAfter(deadline: .now() + 5) { [weak self] in
+            guard let self = self else { return }
+
+            let livePIDs = knownProcessIDs.filter { self.isProcessAlive($0) }
+            guard !livePIDs.isEmpty else { return }
+
+            let result = self.runCommandSync("/bin/kill", arguments: ["-9"] + livePIDs.map(String.init))
+            let forceKillMessage = result.success
+                ? "Watchdog: force-killed lingering processes: \(livePIDs.map(String.init).joined(separator: ", "))"
+                : "Watchdog: failed to force-kill lingering processes (\(livePIDs.map(String.init).joined(separator: ", "))): \(result.output.trimmingCharacters(in: .whitespacesAndNewlines))"
+
+            DispatchQueue.main.async {
+                guard self.watchdogTerminationInfo != nil else { return }
+                self.output += "\n\(forceKillMessage)\n"
+            }
+        }
+    }
+
+    private func trackedRootProcessIDs() -> [Int32] {
+        var pids: [Int32] = []
+
+        if let process, process.processIdentifier > 0 {
+            pids.append(process.processIdentifier)
+        }
+        if let xcodebuildProcess, xcodebuildProcess.processIdentifier > 0 {
+            pids.append(xcodebuildProcess.processIdentifier)
+        }
+
+        return Array(Set(pids)).sorted()
+    }
+
+    private func collectWatchdogDiagnostics(summary: String, rootProcessIDs: [Int32]) -> String {
+        let snapshots = collectProcessTree(rootProcessIDs: rootProcessIDs)
+        let interestingSnapshots = snapshots
+            .filter { snapshot in
+                let executable = URL(fileURLWithPath: snapshot.command).lastPathComponent.lowercased()
+                return ["zsh", "xcodebuild", "xctest", "xcbeautify"].contains(executable)
+            }
+            .sorted { $0.pid < $1.pid }
+
+        var sections: [String] = []
+        sections.append("===== Watchdog Timeout =====")
+        sections.append(summary)
+
+        if interestingSnapshots.isEmpty {
+            sections.append("No tracked xcodebuild/xctest processes were found when diagnostics were collected.")
+            return sections.joined(separator: "\n")
+        }
+
+        sections.append("Processes:")
+        sections.append(
+            interestingSnapshots
+                .map { "pid=\($0.pid) ppid=\($0.parentPID) cmd=\($0.command)" }
+                .joined(separator: "\n")
+        )
+
+        for snapshot in interestingSnapshots {
+            let executable = URL(fileURLWithPath: snapshot.command).lastPathComponent.lowercased()
+            guard executable == "xcodebuild" || executable == "xctest" else { continue }
+
+            let sampleResult = runCommandSync("/usr/bin/sample", arguments: [String(snapshot.pid), "1", "1"])
+            let header = "----- sample \(snapshot.pid) (\(executable)) -----"
+            let body = sampleResult.output.trimmingCharacters(in: .whitespacesAndNewlines)
+            sections.append(header)
+            sections.append(body.isEmpty ? "sample produced no output" : body)
+        }
+
+        return sections.joined(separator: "\n")
+    }
+
+    private func collectProcessTree(rootProcessIDs: [Int32]) -> [ProcessSnapshot] {
+        guard !rootProcessIDs.isEmpty else { return [] }
+
+        let psResult = runCommandSync("/bin/ps", arguments: ["-axo", "pid=,ppid=,comm="])
+        guard psResult.success else { return [] }
+
+        let allSnapshots = psResult.output
+            .split(whereSeparator: \.isNewline)
+            .compactMap(Self.parseProcessSnapshot)
+        let childrenByParent = Dictionary(grouping: allSnapshots, by: \.parentPID)
+        var queue = Array(Set(rootProcessIDs))
+        var visited = Set<Int32>()
+        var collected: [ProcessSnapshot] = []
+
+        while let pid = queue.first {
+            queue.removeFirst()
+            guard visited.insert(pid).inserted else { continue }
+
+            if let snapshot = allSnapshots.first(where: { $0.pid == pid }) {
+                collected.append(snapshot)
+            }
+
+            for child in childrenByParent[pid] ?? [] {
+                queue.append(child.pid)
+            }
+        }
+
+        return collected
+    }
+
+    private static func parseProcessSnapshot(from line: Substring) -> ProcessSnapshot? {
+        let components = line.split(maxSplits: 2, whereSeparator: { $0 == " " || $0 == "\t" }).map(String.init)
+        guard components.count == 3,
+              let pid = Int32(components[0]),
+              let parentPID = Int32(components[1]) else {
+            return nil
+        }
+        return ProcessSnapshot(pid: pid, parentPID: parentPID, command: components[2].trimmingCharacters(in: .whitespaces))
+    }
+
+    private func isProcessAlive(_ pid: Int32) -> Bool {
+        let result = runCommandSync("/bin/kill", arguments: ["-0", String(pid)])
+        return result.success
+    }
     
     func killAllProcesses() {
         killCurrentProcess()
@@ -1412,6 +1685,59 @@ class TestRunner: ObservableObject {
             "DEBUG_INFORMATION_FORMAT=dwarf",
             "ENABLE_MODULE_VERIFIER=NO"
         ]
+    }
+
+    static func xcodebuildTestInactivityTimeoutInterval(from settings: SettingsStore) -> TimeInterval {
+        TimeInterval(max(1, settings.testInactivityTimeoutMinutes) * 60)
+    }
+
+    static func watchdogShouldTrigger(
+        isBuilding: Bool,
+        testPhaseStartedAt: Date?,
+        lastProgressAt: Date?,
+        now: Date,
+        timeout: TimeInterval
+    ) -> Bool {
+        guard !isBuilding,
+              let testPhaseStartedAt,
+              let lastProgressAt else {
+            return false
+        }
+
+        guard now >= testPhaseStartedAt, now >= lastProgressAt else {
+            return false
+        }
+
+        return now.timeIntervalSince(lastProgressAt) >= timeout
+    }
+
+    static func watchdogTimeoutDescription(
+        now: Date,
+        testPhaseStartedAt: Date?,
+        lastProgressAt: Date?,
+        timeout: TimeInterval,
+        passingCount: Int,
+        failingCount: Int,
+        totalCount: Int
+    ) -> String {
+        let timeoutText = formatDuration(timeout)
+        let idleText = lastProgressAt.map { formatDuration(now.timeIntervalSince($0)) } ?? "unknown"
+        let testPhaseText = testPhaseStartedAt.map { formatDuration(now.timeIntervalSince($0)) } ?? "unknown"
+        let countedTotal = max(totalCount, passingCount + failingCount)
+
+        return "Watchdog timed out after \(idleText) without test progress (limit \(timeoutText)) during the test phase. Counted \(passingCount) passing, \(failingCount) failing, \(countedTotal) total. Test phase had been running for \(testPhaseText)."
+    }
+
+    private static func formatDuration(_ interval: TimeInterval) -> String {
+        let totalSeconds = max(0, Int(interval.rounded()))
+        let minutes = totalSeconds / 60
+        let seconds = totalSeconds % 60
+
+        if minutes > 0 {
+            return "\(minutes)m \(seconds)s"
+        } else {
+            return "\(seconds)s"
+        }
     }
 
     static func xcodebuildParallelBuildArguments(enabled: Bool, jobCount: Int) -> [String] {

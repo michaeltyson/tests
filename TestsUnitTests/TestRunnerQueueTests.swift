@@ -218,4 +218,50 @@ final class TestRunnerQueueTests: XCTestCase {
             ]
         )
     }
+
+    func testWatchdogDoesNotTriggerDuringBuildPhase() {
+        let now = Date()
+
+        XCTAssertFalse(
+            TestRunner.watchdogShouldTrigger(
+                isBuilding: true,
+                testPhaseStartedAt: now.addingTimeInterval(-600),
+                lastProgressAt: now.addingTimeInterval(-600),
+                now: now,
+                timeout: 300
+            )
+        )
+    }
+
+    func testWatchdogTriggersAfterProgressStallsInTestPhase() {
+        let now = Date()
+
+        XCTAssertTrue(
+            TestRunner.watchdogShouldTrigger(
+                isBuilding: false,
+                testPhaseStartedAt: now.addingTimeInterval(-900),
+                lastProgressAt: now.addingTimeInterval(-601),
+                now: now,
+                timeout: 600
+            )
+        )
+    }
+
+    func testWatchdogTimeoutDescriptionIncludesTimingAndCounts() {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let summary = TestRunner.watchdogTimeoutDescription(
+            now: now,
+            testPhaseStartedAt: now.addingTimeInterval(-900),
+            lastProgressAt: now.addingTimeInterval(-610),
+            timeout: 600,
+            passingCount: 358,
+            failingCount: 0,
+            totalCount: 400
+        )
+
+        XCTAssertEqual(
+            summary,
+            "Watchdog timed out after 10m 10s without test progress (limit 10m 0s) during the test phase. Counted 358 passing, 0 failing, 400 total. Test phase had been running for 15m 0s."
+        )
+    }
 }

@@ -17,10 +17,15 @@ class SettingsStore: ObservableObject {
         static let parallelTestingEnabled = "parallelTestingEnabled"
         static let parallelBuildJobCount = "parallelBuildJobCount"
         static let preBuildScript = "preBuildScript"
+        static let testInactivityTimeoutMinutes = "testInactivityTimeoutMinutes"
     }
 
     private static func sanitizedParallelBuildJobCount(_ value: Int) -> Int {
         max(1, value)
+    }
+
+    private static func sanitizedTestInactivityTimeoutMinutes(_ value: Int) -> Int {
+        min(max(1, value), 180)
     }
     
     @Published var repositoryPath: String {
@@ -61,6 +66,12 @@ class SettingsStore: ObservableObject {
             }
         }
     }
+
+    @Published var testInactivityTimeoutMinutes: Int {
+        didSet {
+            UserDefaults.standard.set(testInactivityTimeoutMinutes, forKey: Keys.testInactivityTimeoutMinutes)
+        }
+    }
     
     private init() {
         self.repositoryPath = UserDefaults.standard.string(forKey: Keys.repositoryPath) ?? ""
@@ -69,6 +80,8 @@ class SettingsStore: ObservableObject {
         let storedParallelBuildJobCount = UserDefaults.standard.object(forKey: Keys.parallelBuildJobCount) as? Int ?? 6
         self.parallelBuildJobCount = Self.sanitizedParallelBuildJobCount(storedParallelBuildJobCount)
         self.preBuildScript = UserDefaults.standard.string(forKey: Keys.preBuildScript) ?? ""
+        let storedTestInactivityTimeoutMinutes = UserDefaults.standard.object(forKey: Keys.testInactivityTimeoutMinutes) as? Int ?? 10
+        self.testInactivityTimeoutMinutes = Self.sanitizedTestInactivityTimeoutMinutes(storedTestInactivityTimeoutMinutes)
     }
     
     func setRepositoryPath(_ path: String) {
@@ -89,6 +102,10 @@ class SettingsStore: ObservableObject {
 
     func setPreBuildScript(_ script: String) {
         preBuildScript = script
+    }
+
+    func setTestInactivityTimeoutMinutes(_ minutes: Int) {
+        testInactivityTimeoutMinutes = Self.sanitizedTestInactivityTimeoutMinutes(minutes)
     }
     
     var isConfigured: Bool {

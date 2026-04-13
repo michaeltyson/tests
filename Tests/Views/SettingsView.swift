@@ -15,6 +15,7 @@ struct SettingsView: View {
     @State private var parallelTestingEnabled: Bool = true
     @State private var parallelBuildJobCount: Int = 6
     @State private var preBuildScript: String = ""
+    @State private var testInactivityTimeoutMinutes: Int = 10
     @State private var showAdvancedBuildSettings: Bool = false
     
     var body: some View {
@@ -87,6 +88,22 @@ struct SettingsView: View {
                     .font(.system(.body, design: .monospaced))
             }
 
+            settingsCard(
+                title: "Stuck Test Watchdog",
+                description: "Fails a run if the test phase stops making progress for too long."
+            ) {
+                HStack {
+                    Text("Timeout")
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Stepper(value: $testInactivityTimeoutMinutes, in: 1...180) {
+                        Text("\(testInactivityTimeoutMinutes) min")
+                            .monospacedDigit()
+                    }
+                    .controlSize(.small)
+                }
+            }
+
             HStack {
                 Spacer()
                 Button("Cancel") {
@@ -112,6 +129,7 @@ struct SettingsView: View {
             parallelTestingEnabled = settings.parallelTestingEnabled
             parallelBuildJobCount = settings.parallelBuildJobCount
             preBuildScript = settings.preBuildScript
+            testInactivityTimeoutMinutes = settings.testInactivityTimeoutMinutes
             showAdvancedBuildSettings = NSApp.currentEvent?.modifierFlags.contains(.option) == true
         }
     }
@@ -137,6 +155,7 @@ struct SettingsView: View {
         settings.setParallelTestingEnabled(parallelTestingEnabled)
         settings.setParallelBuildJobCount(parallelBuildJobCount)
         settings.setPreBuildScript(preBuildScript)
+        settings.setTestInactivityTimeoutMinutes(testInactivityTimeoutMinutes)
     }
 
     private var header: some View {
