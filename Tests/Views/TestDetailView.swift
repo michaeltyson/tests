@@ -417,6 +417,8 @@ struct TerminalOutputView: NSViewRepresentable {
         // Enable copy functionality
         textView.isRichText = false
         textView.importsGraphics = false
+        textView.usesFindPanel = true
+        textView.isIncrementalSearchingEnabled = true
         
         // Configure text container for wrapping
         textView.textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)

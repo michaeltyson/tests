@@ -123,8 +123,41 @@ struct AppMain {
         editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
         editMenu.addItem(NSMenuItem.separator())
         editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editMenu.addItem(NSMenuItem.separator())
+        editMenu.addItem(makeFindMenuItem(
+            title: "Find...",
+            keyEquivalent: "f",
+            action: .showFindInterface
+        ))
+        editMenu.addItem(makeFindMenuItem(
+            title: "Find Next",
+            keyEquivalent: "g",
+            action: .nextMatch
+        ))
+        editMenu.addItem(makeFindMenuItem(
+            title: "Find Previous",
+            keyEquivalent: "g",
+            modifierMask: [.command, .shift],
+            action: .previousMatch
+        ))
         editMenuItem.submenu = editMenu
 
         app.mainMenu = mainMenu
+    }
+
+    private static func makeFindMenuItem(
+        title: String,
+        keyEquivalent: String,
+        modifierMask: NSEvent.ModifierFlags = [.command],
+        action: NSTextFinder.Action
+    ) -> NSMenuItem {
+        let item = NSMenuItem(
+            title: title,
+            action: #selector(NSResponder.performTextFinderAction(_:)),
+            keyEquivalent: keyEquivalent
+        )
+        item.keyEquivalentModifierMask = modifierMask
+        item.tag = action.rawValue
+        return item
     }
 }
