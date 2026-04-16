@@ -16,6 +16,16 @@ final class TestRunnerQueueTests: XCTestCase {
         )
     }
 
+    func testXcbeautifyArgumentsPreserveUnbeautifiedOutput() {
+        XCTAssertEqual(
+            TestRunner.xcbeautifyArguments(),
+            [
+                "--renderer", "terminal",
+                "--preserve-unbeautified"
+            ]
+        )
+    }
+
     func testParallelTestingArgumentsIncludedWhenEnabled() {
         XCTAssertEqual(
             TestRunner.xcodebuildParallelTestingArguments(enabled: true),
@@ -62,6 +72,30 @@ final class TestRunnerQueueTests: XCTestCase {
         """
 
         XCTAssertEqual(TestRunner.schemeParallelizeBuildablesSetting(from: contents), false)
+    }
+
+    func testRawPreservedFailedTestCaseLineIsRecognizedAsFailure() {
+        let line = "Test case '-[LPClockPhaseLayerTests testMetalClockPhaseLayerDuplicatesCircleVerticesForWrappedForegroundArc]' failed on 'My Mac - xctest (70810)' (0.804 seconds)"
+
+        XCTAssertTrue(TestRunner.isXcodebuildTestCaseLine(line))
+        XCTAssertTrue(TestRunner.isFailedTestResultLine(line))
+        XCTAssertFalse(TestRunner.isPassedTestResultLine(line))
+        XCTAssertEqual(
+            TestRunner.extractTestNameFromTestCaseLine(line),
+            "testMetalClockPhaseLayerDuplicatesCircleVerticesForWrappedForegroundArc"
+        )
+    }
+
+    func testRawPreservedPassedTestCaseLineIsRecognizedAsSuccess() {
+        let line = "Test case '-[LPClockPhaseLayerTests testMetalClockPhaseLayerDuplicatesCircleVerticesForWrappedForegroundArc]' passed on 'My Mac - xctest (70810)' (0.804 seconds)"
+
+        XCTAssertTrue(TestRunner.isXcodebuildTestCaseLine(line))
+        XCTAssertFalse(TestRunner.isFailedTestResultLine(line))
+        XCTAssertTrue(TestRunner.isPassedTestResultLine(line))
+        XCTAssertEqual(
+            TestRunner.extractTestNameFromTestCaseLine(line),
+            "testMetalClockPhaseLayerDuplicatesCircleVerticesForWrappedForegroundArc"
+        )
     }
 
     func testProjectParallelizationSettingReadsYes() {

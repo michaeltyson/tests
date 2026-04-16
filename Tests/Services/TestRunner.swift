@@ -851,7 +851,7 @@ class TestRunner: ObservableObject {
             
             let xcbeautifyProcess = Process()
             xcbeautifyProcess.executableURL = URL(fileURLWithPath: xcbeautifyPath)
-            xcbeautifyProcess.arguments = ["--renderer", "terminal"] // Explicitly use terminal renderer for ANSI colors
+            xcbeautifyProcess.arguments = Self.xcbeautifyArguments() // Preserve original failure lines alongside formatted output
             xcbeautifyProcess.standardInput = xcodebuildOutputPipe
             xcbeautifyProcess.standardOutput = outputPipe
             xcbeautifyProcess.standardError = errorPipe
@@ -1215,6 +1215,12 @@ class TestRunner: ObservableObject {
             return true
         }
 
+        for line in output.components(separatedBy: .newlines) {
+            if Self.isFailedTestResultLine(line) {
+                return true
+            }
+        }
+
         // Avoid false positives from summaries like "0 failed".
         let pattern = #"\b([1-9]\d*)\s+failed\b"#
         guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
@@ -1312,12 +1318,12 @@ class TestRunner: ObservableObject {
                     testName = extractTestNameFromXcbeautifyLine(line)
                     isFailed = true
                 }
-            } else if line.contains("Test Case") {
+            } else if Self.isXcodebuildTestCaseLine(line) {
                 // Standard xcodebuild format: "Test Case '-[ClassName testMethod]' passed/failed"
-                testName = extractTestNameFromTestCaseLine(line)
-                if line.contains("passed") {
+                testName = Self.extractTestNameFromTestCaseLine(line)
+                if Self.isPassedTestResultLine(line) {
                     isPassed = true
-                } else if line.contains("failed") {
+                } else if Self.isFailedTestResultLine(line) {
                     isFailed = true
                 }
             }
@@ -1395,7 +1401,21 @@ class TestRunner: ObservableObject {
         return nil
     }
     
-    private func extractTestNameFromTestCaseLine(_ line: String) -> String? {
+    static func isXcodebuildTestCaseLine(_ line: String) -> Bool {
+        line.localizedCaseInsensitiveContains("test case")
+    }
+
+    static func isFailedTestResultLine(_ line: String) -> Bool {
+        guard isXcodebuildTestCaseLine(line) else { return false }
+        return line.localizedCaseInsensitiveContains("failed")
+    }
+
+    static func isPassedTestResultLine(_ line: String) -> Bool {
+        guard isXcodebuildTestCaseLine(line) else { return false }
+        return line.localizedCaseInsensitiveContains("passed")
+    }
+
+    static func extractTestNameFromTestCaseLine(_ line: String) -> String? {
         // Pattern: "Test Case '-[ClassName testMethod]' passed/failed"
         // Extract testMethod from the brackets
         
@@ -1684,6 +1704,13 @@ class TestRunner: ObservableObject {
             "COMPILER_INDEX_STORE_ENABLE=NO",
             "DEBUG_INFORMATION_FORMAT=dwarf",
             "ENABLE_MODULE_VERIFIER=NO"
+        ]
+    }
+
+    static func xcbeautifyArguments() -> [String] {
+        [
+            "--renderer", "terminal",
+            "--preserve-unbeautified"
         ]
     }
 
