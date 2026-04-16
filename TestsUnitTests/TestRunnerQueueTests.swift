@@ -98,6 +98,97 @@ final class TestRunnerQueueTests: XCTestCase {
         )
     }
 
+    func testXCResultFailureSummaryParsingIncludesIdentifiersAndLocations() throws {
+        let json = """
+        {
+          "testNodes" : [
+            {
+              "nodeType" : "Test Plan",
+              "children" : [
+                {
+                  "nodeType" : "Test Suite",
+                  "children" : [
+                    {
+                      "nodeType" : "Test Case",
+                      "nodeIdentifier" : "LoopyTests/LPExampleTests/testFailure",
+                      "result" : "Failed",
+                      "children" : [
+                        {
+                          "nodeType" : "Failure Message",
+                          "name" : "XCTAssertEqual failed: (\\"1\\") is not equal to (\\"2\\")",
+                          "documentLocationInCreatingWorkspace" : {
+                            "url" : "file:///tmp/LPExampleTests.swift",
+                            "lineNumber" : 42
+                          }
+                        },
+                        {
+                          "nodeType" : "Failure Message",
+                          "name" : "Additional context"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+        """
+
+        let summaries = try XCTUnwrap(TestRunner.parseXCResultFailureSummaries(from: Data(json.utf8)))
+        XCTAssertEqual(
+            summaries,
+            [
+                TestRunner.XCResultFailureSummary(
+                    identifier: "LoopyTests/LPExampleTests/testFailure",
+                    messages: [
+                        "/tmp/LPExampleTests.swift:42: XCTAssertEqual failed: (\"1\") is not equal to (\"2\")",
+                        "Additional context"
+                    ]
+                )
+            ]
+        )
+    }
+
+    func testXCResultFailureSummaryParsingDedupesRepeatedMessagesInOrder() throws {
+        let json = """
+        {
+          "testNodes" : [
+            {
+              "nodeType" : "Test Case",
+              "name" : "FallbackIdentifier",
+              "result" : "Failed",
+              "children" : [
+                {
+                  "nodeType" : "Failure Message",
+                  "name" : "Repeated failure"
+                },
+                {
+                  "nodeType" : "Failure Message",
+                  "name" : "Repeated failure"
+                },
+                {
+                  "nodeType" : "Failure Message",
+                  "name" : "Second failure"
+                }
+              ]
+            }
+          ]
+        }
+        """
+
+        let summaries = try XCTUnwrap(TestRunner.parseXCResultFailureSummaries(from: Data(json.utf8)))
+        XCTAssertEqual(
+            summaries,
+            [
+                TestRunner.XCResultFailureSummary(
+                    identifier: "FallbackIdentifier",
+                    messages: ["Repeated failure", "Second failure"]
+                )
+            ]
+        )
+    }
+
     func testProjectParallelizationSettingReadsYes() {
         let contents = """
         attributes = {

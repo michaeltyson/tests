@@ -408,19 +408,43 @@ class TestRunner: ObservableObject {
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = pipe
+        let outputHandle = pipe.fileHandleForReading
+        let outputLock = NSLock()
+        var collectedOutput = Data()
 
         do {
+            // Drain command output while the subprocess is still running.
+            // Commands like xcresulttool can emit enough JSON to fill the pipe
+            // buffer and deadlock if we wait for exit before reading.
+            outputHandle.readabilityHandler = { handle in
+                let data = handle.availableData
+                guard !data.isEmpty else { return }
+                outputLock.lock()
+                collectedOutput.append(data)
+                outputLock.unlock()
+            }
+
             try process.run()
             process.waitUntilExit()
+            outputHandle.readabilityHandler = nil
 
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            let outputString = String(data: data, encoding: .utf8) ?? ""
+            let trailingData = outputHandle.readDataToEndOfFile()
+            if !trailingData.isEmpty {
+                outputLock.lock()
+                collectedOutput.append(trailingData)
+                outputLock.unlock()
+            }
+
+            outputLock.lock()
+            let outputString = String(data: collectedOutput, encoding: .utf8) ?? ""
+            outputLock.unlock()
             return ShellCommandResult(
                 success: process.terminationStatus == 0,
                 output: outputString,
                 terminationStatus: process.terminationStatus
             )
         } catch {
+            outputHandle.readabilityHandler = nil
             return ShellCommandResult(
                 success: false,
                 output: "Failed to run \(executablePath): \(error.localizedDescription)",
