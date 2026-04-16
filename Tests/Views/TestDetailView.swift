@@ -398,6 +398,10 @@ struct TerminalOutputView: NSViewRepresentable {
         self.followsTail = followsTail
         self._currentFailureIndex = currentFailureIndex
     }
+
+    private var terminalFont: NSFont {
+        NSFont(name: "Menlo", size: 11) ?? NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+    }
     
     func makeNSView(context: Context) -> NSScrollView {
         let scrollView = NSScrollView()
@@ -407,14 +411,13 @@ struct TerminalOutputView: NSViewRepresentable {
         textView.isEditable = false
         textView.isSelectable = true
         textView.allowsUndo = false
-        textView.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+        textView.font = terminalFont
         textView.drawsBackground = false
         textView.backgroundColor = .clear
         textView.textColor = NSColor.labelColor
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
         
-        // Enable copy functionality
         textView.isRichText = false
         textView.importsGraphics = false
         textView.usesFindPanel = true
@@ -696,7 +699,7 @@ struct TerminalOutputView: NSViewRepresentable {
     private func parseANSI(_ text: String, failureRanges: [NSRange] = []) -> NSAttributedString {
         // Use a more efficient parsing approach
         let result = NSMutableAttributedString()
-        let font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+        let font = terminalFont
         let defaultColor = NSColor.labelColor
         
         // Pattern to match ANSI escape sequences: [ followed by codes and 'm'
