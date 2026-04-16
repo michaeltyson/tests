@@ -18,6 +18,14 @@ struct TestDetailView: View {
     private var outputLog: String? {
         testRun.outputLog
     }
+
+    private var abbreviatedCommitSHA: String? {
+        guard let commitSHA = testRun.commitSHA?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !commitSHA.isEmpty else {
+            return nil
+        }
+        return String(commitSHA.prefix(12))
+    }
     
     var body: some View {
         VStack(spacing: 0) {
@@ -85,6 +93,20 @@ struct TestDetailView: View {
                             .padding(.vertical, 2)
                             .background(Color.secondary.opacity(0.1))
                             .cornerRadius(4)
+                    }
+
+                    if let abbreviatedCommitSHA {
+                        Button(action: copyCommitSHAToClipboard) {
+                            Text("Commit: \(abbreviatedCommitSHA)")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Color.secondary.opacity(0.1))
+                                .cornerRadius(4)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Copy commit SHA: \(testRun.commitSHA ?? abbreviatedCommitSHA)")
                     }
                 }
                 
@@ -275,6 +297,17 @@ struct TestDetailView: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
             copied = false
         }
+    }
+
+    private func copyCommitSHAToClipboard() {
+        guard let commitSHA = testRun.commitSHA?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !commitSHA.isEmpty else {
+            return
+        }
+
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(commitSHA, forType: .string)
     }
     
     // Find ranges in text after removing ANSI codes (to match what's displayed)

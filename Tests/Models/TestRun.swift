@@ -29,6 +29,7 @@ struct TestRun: Identifiable, Codable, Hashable {
     var failingCount: Int?
     var totalCount: Int?
     var branchName: String?
+    var commitSHA: String?
     
     init(id: UUID = UUID(), timestamp: Date = Date(), status: TestRunStatus = .running) {
         self.id = id
@@ -36,4 +37,3 @@ struct TestRun: Identifiable, Codable, Hashable {
         self.status = status
     }
 }
-

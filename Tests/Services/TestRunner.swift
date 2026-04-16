@@ -73,6 +73,11 @@ class TestRunner: ObservableObject {
         let command: String
     }
 
+    struct XCResultFailureSummary: Equatable {
+        let identifier: String
+        let messages: [String]
+    }
+
     enum RunDispatchAction: Equatable {
         case startNow
         case queued
@@ -771,6 +776,22 @@ class TestRunner: ObservableObject {
     private func recordPreparedWorkspaceRef(_ ref: String) {
         UserDefaults.standard.set(ref, forKey: Self.lastPreparedWorkspaceRefKey)
     }
+
+    private func currentCommitSHASync(in directory: URL) -> String? {
+        let previousDirectory = fileManager.currentDirectoryPath
+        fileManager.changeCurrentDirectoryPath(directory.path)
+        defer {
+            fileManager.changeCurrentDirectoryPath(previousDirectory)
+        }
+
+        let result = runCommandSync("/usr/bin/git", arguments: ["rev-parse", "HEAD"])
+        guard result.success else {
+            return nil
+        }
+
+        let sha = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+        return sha.isEmpty ? nil : sha
+    }
     
     private func runXcodebuildTests(workspaceURL: URL, branchName: String, workspaceDirectory: URL) {
         if isCancelled {
@@ -785,6 +806,7 @@ class TestRunner: ObservableObject {
             var testRun = TestRun(status: .running)
             testRun.totalCount = totalCount > 0 ? totalCount : nil
             testRun.branchName = branchName
+            testRun.commitSHA = currentCommitSHASync(in: workspaceDirectory)
             currentTestRun = testRun
             sendTestStartNotification(branchName: branchName)
         }
@@ -999,7 +1021,8 @@ class TestRunner: ObservableObject {
                 }
             }
             
-            // Wait a moment for all async updates to complete, then capture output on main thread
+            // Wait a moment for all async updates to complete, then capture output on main thread.
+            // Any expensive xcresult parsing runs off-main to avoid blocking AppKit's run loop.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                 self.isRunning = false
                 self.isBuilding = false
@@ -1008,7 +1031,7 @@ class TestRunner: ObservableObject {
                 self.activeBranchName = nil
                 self.outputHandle = nil
                 self.errorHandle = nil
-                
+
                 // Don't save if cancelled
                 if self.isCancelled {
                     self.isCancelled = false
@@ -1016,55 +1039,77 @@ class TestRunner: ObservableObject {
                     self.startNextQueuedRunIfNeeded()
                     return
                 }
-                
-                // Capture output on main thread after all updates are complete
+
+                guard var testRun = self.currentTestRun else {
+                    self.watchdogTerminationInfo = nil
+                    self.startNextQueuedRunIfNeeded()
+                    return
+                }
+
                 let finalOutput = self.output
-                
-                if var testRun = self.currentTestRun {
-                    let duration = Date().timeIntervalSince(testRun.timestamp)
-                    testRun.duration = duration
-                    testRun.outputLog = finalOutput
-                    
-                    // Use live counts (from parseTestOutput) as the source of truth
-                    // Don't overwrite with summary parsing which may pick up intermediate suite summaries
-                    testRun.passingCount = self.passingCount
-                    testRun.failingCount = self.failingCount
-                    
-                    // Total count is the sum of passing and failing (what we actually counted)
-                    let countedTotal = self.passingCount + self.failingCount
-                    testRun.totalCount = countedTotal > 0 ? countedTotal : nil
-                    
-                    // Store total count in UserDefaults for next run (use counted total)
-                    if countedTotal > 0 {
-                        UserDefaults.standard.set(countedTotal, forKey: Self.totalCountKey)
+                let passingCount = self.passingCount
+                let failingCount = self.failingCount
+                let watchdogTerminationInfo = self.watchdogTerminationInfo
+
+                let duration = Date().timeIntervalSince(testRun.timestamp)
+                testRun.duration = duration
+                testRun.outputLog = finalOutput
+                testRun.passingCount = passingCount
+                testRun.failingCount = failingCount
+
+                let countedTotal = passingCount + failingCount
+                testRun.totalCount = countedTotal > 0 ? countedTotal : nil
+
+                if countedTotal > 0 {
+                    UserDefaults.standard.set(countedTotal, forKey: Self.totalCountKey)
+                }
+
+                if let watchdogTerminationInfo {
+                    testRun.status = .error
+                    testRun.errorDescription = watchdogTerminationInfo.summary
+                } else if finalOutput.contains("** BUILD FAILED **") || finalOutput.contains("BUILD FAILED") {
+                    testRun.status = .error
+                    testRun.errorDescription = self.extractError(from: finalOutput)
+                } else if finalOutput.contains("error:") || finalOutput.contains("*** Terminating") || finalOutput.contains("❌") {
+                    testRun.status = .error
+                    testRun.errorDescription = self.extractError(from: finalOutput)
+                } else if failingCount > 0 || self.outputContainsRealTestFailure(finalOutput) {
+                    testRun.status = .failed
+                } else if finalOutput.contains("warning:") || finalOutput.contains("⚠️") {
+                    testRun.status = .warnings
+                } else if finalOutput.contains("✅") || finalOutput.contains("** TEST SUCCEEDED **") || finalOutput.contains("TEST SUCCEEDED") {
+                    testRun.status = .success
+                } else {
+                    testRun.status = failingCount > 0 ? .failed : .success
+                }
+
+                let shouldAppendFailureSummary = testRun.status == .failed || testRun.status == .error
+
+                DispatchQueue.global(qos: .userInitiated).async {
+                    let summarySuffix: String
+                    if shouldAppendFailureSummary,
+                       let failureSummary = self.buildLatestXCResultFailureSummary(in: workspaceDirectory),
+                       !failureSummary.isEmpty {
+                        let separator = finalOutput.hasSuffix("\n") || finalOutput.isEmpty ? "" : "\n"
+                        summarySuffix = separator + failureSummary
+                    } else {
+                        summarySuffix = ""
                     }
 
-                    if let watchdogTerminationInfo = self.watchdogTerminationInfo {
-                        testRun.status = .error
-                        testRun.errorDescription = watchdogTerminationInfo.summary
-                    } else if finalOutput.contains("error:") || finalOutput.contains("*** Terminating") || finalOutput.contains("❌") {
-                        testRun.status = .error
-                        testRun.errorDescription = self.extractError(from: finalOutput)
-                    } else if finalOutput.contains("** BUILD FAILED **") || finalOutput.contains("BUILD FAILED") {
-                        testRun.status = .error
-                    } else if self.failingCount > 0 || self.outputContainsRealTestFailure(finalOutput) {
-                        testRun.status = .failed
-                    } else if finalOutput.contains("warning:") || finalOutput.contains("⚠️") {
-                        testRun.status = .warnings
-                    } else if finalOutput.contains("✅") || finalOutput.contains("** TEST SUCCEEDED **") || finalOutput.contains("TEST SUCCEEDED") {
-                        testRun.status = .success
-                    } else {
-                        // Default to success only if we have no failures
-                        testRun.status = self.failingCount > 0 ? .failed : .success
+                    let outputWithSummary = finalOutput + summarySuffix
+
+                    DispatchQueue.main.async {
+                        testRun.outputLog = outputWithSummary
+                        if !summarySuffix.isEmpty {
+                            self.output += summarySuffix
+                        }
+                        self.currentTestRun = testRun
+
+                        self.sendTestCompletionNotification(testRun: testRun)
+                        self.watchdogTerminationInfo = nil
+                        self.startNextQueuedRunIfNeeded()
                     }
-                    
-                    self.currentTestRun = testRun
-                    
-                    // Send notification that tests have completed
-                    self.sendTestCompletionNotification(testRun: testRun)
                 }
-                self.watchdogTerminationInfo = nil
-                self.startNextQueuedRunIfNeeded()
             }
         }
         
@@ -1196,6 +1241,9 @@ class TestRunner: ObservableObject {
     private func extractError(from output: String) -> String? {
         let lines = output.components(separatedBy: .newlines)
         for line in lines {
+            if line.localizedCaseInsensitiveContains("Test failure summary from ") {
+                continue
+            }
             if line.lowercased().contains("error:") {
                 if let range = line.range(of: "error:", options: .caseInsensitive) {
                     return String(line[range.upperBound...]).trimmingCharacters(in: .whitespaces)
@@ -1206,6 +1254,224 @@ class TestRunner: ObservableObject {
                     return String(line[range.upperBound...]).trimmingCharacters(in: .whitespaces)
                 }
             }
+        }
+        return nil
+    }
+
+    private func buildLatestXCResultFailureSummary(in workspaceDirectory: URL) -> String? {
+        guard let resultBundleURL = latestXCResultBundle(in: workspaceDirectory) else {
+            return "Tests failed. No .xcresult bundle was found under \(testLogsDirectory(in: workspaceDirectory).path)"
+        }
+
+        let temporaryParentDirectory = fileManager.temporaryDirectory
+            .appendingPathComponent("Tests-xcresult-\(UUID().uuidString)", isDirectory: true)
+        let temporaryBundleURL = temporaryParentDirectory.appendingPathComponent(resultBundleURL.lastPathComponent, isDirectory: true)
+
+        do {
+            try fileManager.createDirectory(at: temporaryParentDirectory, withIntermediateDirectories: true)
+            try fileManager.copyItem(at: resultBundleURL, to: temporaryBundleURL)
+        } catch {
+            try? fileManager.removeItem(at: temporaryParentDirectory)
+            return """
+            Test failure summary from \(resultBundleURL.lastPathComponent):
+              Couldn't copy result bundle for summary: \(resultBundleURL.path)
+              Copy error: \(error.localizedDescription)
+            Result bundle: \(resultBundleURL.path)
+            """
+        }
+
+        defer {
+            try? fileManager.removeItem(at: temporaryParentDirectory)
+        }
+
+        let commandResult = runCommandSync(
+            "/usr/bin/xcrun",
+            arguments: [
+                "xcresulttool",
+                "get",
+                "test-results",
+                "tests",
+                "--path",
+                temporaryBundleURL.path,
+                "--compact"
+            ]
+        )
+
+        guard commandResult.success else {
+            let trimmedOutput = commandResult.output.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmedOutput.isEmpty {
+                return """
+                Test failure summary from \(resultBundleURL.lastPathComponent):
+                  Unable to extract structured failure details from \(resultBundleURL.path)
+                Result bundle: \(resultBundleURL.path)
+                """
+            }
+
+            return """
+            Test failure summary from \(resultBundleURL.lastPathComponent):
+              Unable to extract structured failure details from \(resultBundleURL.path)
+              xcresulttool output: \(trimmedOutput)
+            Result bundle: \(resultBundleURL.path)
+            """
+        }
+
+        guard
+            let data = commandResult.output.data(using: .utf8),
+            let failures = Self.parseXCResultFailureSummaries(from: data)
+        else {
+            return """
+            Test failure summary from \(resultBundleURL.lastPathComponent):
+              Unable to extract structured failure details from \(resultBundleURL.path)
+            Result bundle: \(resultBundleURL.path)
+            """
+        }
+
+        var lines = ["Test failure summary from \(resultBundleURL.lastPathComponent):"]
+        if failures.isEmpty {
+            lines.append("  No failed test cases were found in the xcresult test report.")
+        } else {
+            for failure in failures {
+                lines.append(failure.identifier)
+                for message in failure.messages {
+                    lines.append("  \(message)")
+                }
+                lines.append("")
+            }
+
+            if lines.last?.isEmpty == true {
+                lines.removeLast()
+            }
+        }
+        lines.append("Result bundle: \(resultBundleURL.path)")
+        return lines.joined(separator: "\n")
+    }
+
+    private func testLogsDirectory(in workspaceDirectory: URL) -> URL {
+        workspaceBuildArtifactDirectory(in: workspaceDirectory)
+            .appendingPathComponent("Logs", isDirectory: true)
+            .appendingPathComponent("Test", isDirectory: true)
+    }
+
+    private func latestXCResultBundle(in workspaceDirectory: URL) -> URL? {
+        let testLogsURL = testLogsDirectory(in: workspaceDirectory)
+        guard let bundleURLs = try? fileManager.contentsOfDirectory(
+            at: testLogsURL,
+            includingPropertiesForKeys: [.contentModificationDateKey, .isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return nil
+        }
+
+        return bundleURLs
+            .filter { $0.pathExtension == "xcresult" && $0.lastPathComponent.hasPrefix("Test-") }
+            .sorted { lhs, rhs in
+                let lhsDate = (try? lhs.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+                let rhsDate = (try? rhs.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+                return lhsDate > rhsDate
+            }
+            .first
+    }
+
+    static func parseXCResultFailureSummaries(from data: Data) -> [XCResultFailureSummary]? {
+        guard
+            let jsonObject = try? JSONSerialization.jsonObject(with: data),
+            let root = jsonObject as? [String: Any]
+        else {
+            return nil
+        }
+
+        let testNodes = root["testNodes"] as? [[String: Any]] ?? []
+        var failures: [XCResultFailureSummary] = []
+        for node in testNodes {
+            collectXCResultFailures(in: node, into: &failures)
+        }
+        return failures
+    }
+
+    private static func collectXCResultFailures(in node: [String: Any], into failures: inout [XCResultFailureSummary]) {
+        let children = node["children"] as? [[String: Any]] ?? []
+
+        let nodeType = node["nodeType"] as? String
+        let result = node["result"] as? String
+        if nodeType == "Test Case", result == "Failed" {
+            let identifier = ((node["nodeIdentifier"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap {
+                $0.isEmpty ? nil : $0
+            } ?? ((node["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap {
+                $0.isEmpty ? nil : $0
+            } ?? "Unknown failed test"
+
+            let messages = uniqueFailureMessages(from: collectXCResultFailureMessages(in: node))
+            failures.append(
+                XCResultFailureSummary(
+                    identifier: identifier,
+                    messages: messages.isEmpty ? ["No failure message text was present in the xcresult data."] : messages
+                )
+            )
+        }
+
+        for child in children {
+            collectXCResultFailures(in: child, into: &failures)
+        }
+    }
+
+    private static func collectXCResultFailureMessages(in node: [String: Any]) -> [String] {
+        var messages: [String] = []
+
+        let nodeType = node["nodeType"] as? String
+        if nodeType == "Failure Message",
+           let name = (node["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !name.isEmpty {
+            if let documentLocation = formattedXCResultDocumentLocation(from: node["documentLocationInCreatingWorkspace"] as? [String: Any]) {
+                messages.append("\(documentLocation): \(name)")
+            } else {
+                messages.append(name)
+            }
+        }
+
+        let children = node["children"] as? [[String: Any]] ?? []
+        for child in children {
+            messages.append(contentsOf: collectXCResultFailureMessages(in: child))
+        }
+
+        return messages
+    }
+
+    private static func uniqueFailureMessages(from messages: [String]) -> [String] {
+        var seen = Set<String>()
+        var uniqueMessages: [String] = []
+
+        for message in messages {
+            if seen.insert(message).inserted {
+                uniqueMessages.append(message)
+            }
+        }
+
+        return uniqueMessages
+    }
+
+    private static func formattedXCResultDocumentLocation(from location: [String: Any]?) -> String? {
+        guard let location else { return nil }
+
+        let fileURLString = (location["url"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let filePath = fileURLString.flatMap { value -> String? in
+            guard !value.isEmpty else { return nil }
+            if let url = URL(string: value), url.isFileURL {
+                return url.path
+            }
+            return value
+        }
+
+        let lineNumber = (location["lineNumber"] as? Int)
+            ?? Int((location["lineNumber"] as? String) ?? "")
+
+        if let filePath, let lineNumber {
+            return "\(filePath):\(lineNumber)"
+        }
+        if let filePath {
+            return filePath
+        }
+        if let lineNumber {
+            return "line \(lineNumber)"
         }
         return nil
     }
