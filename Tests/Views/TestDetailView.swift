@@ -11,12 +11,18 @@ import AppKit
 struct TestDetailView: View {
     let testRun: TestRun
     @State private var copied = false
+    @State private var copiedFailures = false
     @State private var failureRanges: [NSRange] = []
     @State private var currentFailureIndex: Int = -1
     @State private var hasAutoScrolled = false
     
     private var outputLog: String? {
         testRun.outputLog
+    }
+    
+    private var failureCopyText: String? {
+        guard let output = outputLog, !output.isEmpty else { return nil }
+        return extractFailureText(from: output)
     }
 
     private var abbreviatedCommitSHA: String? {
@@ -74,10 +80,19 @@ struct TestDetailView: View {
                     }
                     
                     Spacer()
-                    Button(action: copyToClipboard) {
-                        Text(copied ? "Copied!" : "Copy Output")
+                    HStack(spacing: 8) {
+                        if let failureCopyText, !failureCopyText.isEmpty {
+                            Button(action: { copyFailuresToClipboard(failureCopyText) }) {
+                                Text(copiedFailures ? "Copied!" : "Copy Failures")
+                            }
+                            .buttonStyle(.bordered)
+                        }
+                        
+                        Button(action: copyToClipboard) {
+                            Text(copied ? "Copied!" : "Copy Output")
+                        }
+                        .buttonStyle(.bordered)
                     }
-                    .buttonStyle(.bordered)
                 }
                 
                 HStack(spacing: 12) {
@@ -294,8 +309,20 @@ struct TestDetailView: View {
         pasteboard.clearContents()
         pasteboard.setString(testRun.outputLog ?? "", forType: .string)
         copied = true
+        copiedFailures = false
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
             copied = false
+        }
+    }
+    
+    private func copyFailuresToClipboard(_ text: String) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+        copiedFailures = true
+        copied = false
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            copiedFailures = false
         }
     }
 
@@ -326,6 +353,73 @@ struct TestDetailView: View {
             return regex.stringByReplacingMatches(in: text, options: [], range: range, withTemplate: "")
         }
         return text
+    }
+    
+    private func extractFailureText(from text: String) -> String? {
+        let displayedText = removeANSICodes(from: text)
+        
+        if let summaryBlock = extractFailureSummaryBlock(from: displayedText) {
+            return summaryBlock
+        }
+        
+        let lines = displayedText.components(separatedBy: .newlines)
+        guard !lines.isEmpty else { return nil }
+        
+        var seenLines = Set<String>()
+        let failureLines = lines.compactMap { line -> String? in
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard isFailureLine(trimmed), !trimmed.isEmpty else { return nil }
+            guard seenLines.insert(trimmed).inserted else { return nil }
+            return trimmed
+        }
+        
+        guard !failureLines.isEmpty else { return nil }
+        return failureLines.joined(separator: "\n")
+    }
+    
+    private func extractFailureSummaryBlock(from text: String) -> String? {
+        let summaryHeader = "Test failure summary from "
+        guard let summaryRange = text.range(of: summaryHeader) else { return nil }
+        
+        let trailingText = text[summaryRange.lowerBound...]
+        let endMarkers = [
+            "\nResult bundle:",
+            "\nTest session results:",
+        ]
+        
+        let endIndex = endMarkers
+            .compactMap { marker in
+                trailingText.range(of: marker)?.lowerBound
+            }
+            .min() ?? trailingText.endIndex
+        
+        let summaryBlock = trailingText[..<endIndex]
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        return summaryBlock.isEmpty ? nil : String(summaryBlock)
+    }
+    
+    private func isFailureLine(_ line: String) -> Bool {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        
+        if trimmed.contains("✖") || trimmed.contains("✗") || trimmed.contains("×") {
+            return true
+        }
+        
+        if trimmed.localizedCaseInsensitiveContains("error:") {
+            return true
+        }
+        
+        if trimmed.contains("Test Case") && trimmed.localizedCaseInsensitiveContains("failed") {
+            return true
+        }
+        
+        if trimmed.localizedCaseInsensitiveContains("failed:") {
+            return true
+        }
+        
+        return false
     }
     
     private func findFailureRanges(in displayedText: String, originalText: String) {
