@@ -24,6 +24,7 @@ struct BranchSelectionView: View {
     }
 
     @ObservedObject var settings = SettingsStore.shared
+    @ObservedObject var testResultStore: TestResultStore
     @State private var branchName: String = ""
     @State private var availableRefs: [RefSuggestion] = []
     @State private var filteredRefs: [RefSuggestion] = []
@@ -186,6 +187,7 @@ struct BranchSelectionView: View {
         
         isLoading = true
         let repositoryPath = settings.repositoryPath
+        let recentBranchOrder = recentBranchOrder()
         
         DispatchQueue.global(qos: .userInitiated).async {
             let branchOutput = self.runGitCommand(["branch", "-a"], repositoryPath: repositoryPath)
@@ -194,7 +196,10 @@ struct BranchSelectionView: View {
                 repositoryPath: repositoryPath
             )
 
-            let branchSuggestions = self.parseBranchSuggestions(from: branchOutput ?? "")
+            let branchSuggestions = self.parseBranchSuggestions(
+                from: branchOutput ?? "",
+                recentBranchOrder: recentBranchOrder
+            )
             let commitSuggestions = self.parseCommitSuggestions(from: commitOutput ?? "")
             let allSuggestions = branchSuggestions + commitSuggestions
 
@@ -227,7 +232,7 @@ struct BranchSelectionView: View {
         }
     }
 
-    private func parseBranchSuggestions(from output: String) -> [RefSuggestion] {
+    private func parseBranchSuggestions(from output: String, recentBranchOrder: [String: Int]) -> [RefSuggestion] {
         var branches = output.components(separatedBy: .newlines)
             .map { line in
                 var branch = line.trimmingCharacters(in: .whitespaces)
@@ -248,10 +253,44 @@ struct BranchSelectionView: View {
             .filter { !$0.hasPrefix("HEAD") }
             .filter { !$0.contains("->") }
 
-        branches = Array(Set(branches)).sorted()
+        branches = Array(Set(branches)).sorted {
+            switch (recentBranchOrder[$0], recentBranchOrder[$1]) {
+            case let (lhs?, rhs?):
+                return lhs == rhs ? $0.localizedCaseInsensitiveCompare($1) == .orderedAscending : lhs < rhs
+            case (_?, nil):
+                return true
+            case (nil, _?):
+                return false
+            case (nil, nil):
+                return $0.localizedCaseInsensitiveCompare($1) == .orderedAscending
+            }
+        }
         return branches.map { branch in
             RefSuggestion(kind: .branch, ref: branch, title: branch, subtitle: "Branch")
         }
+    }
+
+    private func recentBranchOrder() -> [String: Int] {
+        var order: [String: Int] = [:]
+        let recentRuns = testResultStore.testRuns.sorted { $0.timestamp > $1.timestamp }
+
+        for run in recentRuns {
+            guard let branch = normalizedBranchName(run.branchName), order[branch] == nil else {
+                continue
+            }
+            order[branch] = order.count
+        }
+
+        return order
+    }
+
+    private func normalizedBranchName(_ branchName: String?) -> String? {
+        guard var branchName else { return nil }
+        branchName = branchName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if branchName.hasPrefix("+") {
+            branchName = String(branchName.dropFirst()).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return branchName.isEmpty ? nil : branchName
     }
 
     private func parseCommitSuggestions(from output: String) -> [RefSuggestion] {

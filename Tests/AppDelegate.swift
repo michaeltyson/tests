@@ -361,7 +361,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUserNoti
     }
     
     func setupBranchSelectionWindow() {
-        let contentView = BranchSelectionView { [weak self] branchName in
+        let contentView = BranchSelectionView(testResultStore: testResultStore) { [weak self] branchName in
             // Close the window
             if let window = self?.branchSelectionWindow {
                 window.close()
