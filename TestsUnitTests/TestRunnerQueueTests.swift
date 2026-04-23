@@ -249,6 +249,44 @@ final class TestRunnerQueueTests: XCTestCase {
         )
     }
 
+    func testSourceRemoteTrackingRefspecMirrorsRemoteOnlyBranches() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let source = root.appendingPathComponent("source", isDirectory: true)
+        let clone = root.appendingPathComponent("clone", isDirectory: true)
+        try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        try runGit(["init"], in: source)
+        try runGit(["config", "user.email", "tests@example.com"], in: source)
+        try runGit(["config", "user.name", "Tests"], in: source)
+        let readme = source.appendingPathComponent("README.md")
+        try "initial\n".write(to: readme, atomically: true, encoding: .utf8)
+        try runGit(["add", "README.md"], in: source)
+        try runGit(["commit", "-m", "Initial commit"], in: source)
+        try runGit(["update-ref", "refs/remotes/origin/release/2.1", "HEAD"], in: source)
+
+        try runGit(["clone", "file://\(source.path)", clone.path], in: root)
+        XCTAssertThrowsError(
+            try runGit(
+                ["show-ref", "--verify", "refs/remotes/origin/release/2.1"],
+                in: clone
+            )
+        )
+
+        try runGit(["fetch", "origin", TestRunner.sourceRemoteTrackingFetchRefspec], in: clone)
+        try runGit(
+            ["checkout", "-B", "release/2.1", TestRunner.mirroredSourceRemoteTrackingRef(for: "release/2.1")],
+            in: clone
+        )
+
+        let checkedOutBranch = try runGit(["branch", "--show-current"], in: clone)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        XCTAssertEqual(checkedOutBranch, "release/2.1")
+    }
+
     func testSameBranchTriggerQueuesOnceAndRequestsCancellation() {
         let runner = TestRunner()
         runner.isRunning = true
@@ -388,5 +426,33 @@ final class TestRunnerQueueTests: XCTestCase {
             summary,
             "Watchdog timed out after 10m 10s without test progress (limit 10m 0s) during the test phase. Counted 358 passing, 0 failing, 400 total. Test phase had been running for 15m 0s."
         )
+    }
+
+    @discardableResult
+    private func runGit(_ arguments: [String], in directory: URL) throws -> String {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        process.arguments = arguments
+        process.currentDirectoryURL = directory
+
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+
+        try process.run()
+        process.waitUntilExit()
+
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let output = String(data: data, encoding: .utf8) ?? ""
+        if process.terminationStatus != 0 {
+            throw NSError(
+                domain: "TestRunnerQueueTests.git",
+                code: Int(process.terminationStatus),
+                userInfo: [
+                    NSLocalizedDescriptionKey: "git \(arguments.joined(separator: " ")) failed: \(output)"
+                ]
+            )
+        }
+        return output
     }
 }
