@@ -14,10 +14,7 @@ struct SettingsView: View {
     @State private var branchName: String = ""
     @State private var ignoredAutomaticBranchPrefixes: String = ""
     @State private var parallelTestingEnabled: Bool = true
-    @State private var parallelBuildJobCount: Int = 6
     @State private var preBuildScript: String = ""
-    @State private var testInactivityTimeoutMinutes: Int = 10
-    @State private var showAdvancedBuildSettings: Bool = false
     
     var body: some View {
         VStack(spacing: 18) {
@@ -37,46 +34,21 @@ struct SettingsView: View {
                 }
             }
 
-            settingsCard(
-                title: "Default Branch",
-                description: "Used for manual runs when you do not explicitly choose a branch."
-            ) {
-                TextField("Branch name", text: $branchName)
-                    .textFieldStyle(.roundedBorder)
-            }
-
             HStack(alignment: .top, spacing: 16) {
+                settingsCard(
+                    title: "Default Branch",
+                    description: "Used for manual runs when you do not explicitly choose a branch."
+                ) {
+                    TextField("Branch name", text: $branchName)
+                        .textFieldStyle(.roundedBorder)
+                }
+
                 settingsCard(
                     title: "Test Parallelization",
                     description: "Let xcodebuild execute tests in parallel when supported."
                 ) {
                     Toggle("Enable parallel testing", isOn: $parallelTestingEnabled)
                         .toggleStyle(.switch)
-                }
-
-                settingsCard(
-                    title: "Build Parallelization",
-                    description: "Uses the active scheme or project defaults for target parallelization during build-for-testing."
-                ) {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Label("Uses scheme and project defaults", systemImage: "link")
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundColor(.secondary)
-
-                        if showAdvancedBuildSettings {
-                            HStack {
-                                Text("Build jobs")
-                                    .foregroundColor(.secondary)
-                                Spacer()
-                                Stepper(value: $parallelBuildJobCount, in: 1...32) {
-                                    Text("\(parallelBuildJobCount)")
-                                        .monospacedDigit()
-                                        .frame(minWidth: 28, alignment: .trailing)
-                                }
-                                .controlSize(.small)
-                            }
-                        }
-                    }
                 }
             }
 
@@ -87,22 +59,6 @@ struct SettingsView: View {
                 TextField("Shell script", text: $preBuildScript)
                     .textFieldStyle(.roundedBorder)
                     .font(.system(.body, design: .monospaced))
-            }
-
-            settingsCard(
-                title: "Stuck Test Watchdog",
-                description: "Fails a run if the test phase stops making progress for too long."
-            ) {
-                HStack {
-                    Text("Timeout")
-                        .foregroundColor(.secondary)
-                    Spacer()
-                    Stepper(value: $testInactivityTimeoutMinutes, in: 1...180) {
-                        Text("\(testInactivityTimeoutMinutes) min")
-                            .monospacedDigit()
-                    }
-                    .controlSize(.small)
-                }
             }
 
             settingsCard(
@@ -138,10 +94,7 @@ struct SettingsView: View {
             branchName = settings.branchName ?? ""
             ignoredAutomaticBranchPrefixes = settings.ignoredAutomaticBranchPrefixes
             parallelTestingEnabled = settings.parallelTestingEnabled
-            parallelBuildJobCount = settings.parallelBuildJobCount
             preBuildScript = settings.preBuildScript
-            testInactivityTimeoutMinutes = settings.testInactivityTimeoutMinutes
-            showAdvancedBuildSettings = NSApp.currentEvent?.modifierFlags.contains(.option) == true
         }
     }
     
@@ -165,9 +118,7 @@ struct SettingsView: View {
         settings.setBranchName(branchName.isEmpty ? nil : branchName)
         settings.setIgnoredAutomaticBranchPrefixes(ignoredAutomaticBranchPrefixes)
         settings.setParallelTestingEnabled(parallelTestingEnabled)
-        settings.setParallelBuildJobCount(parallelBuildJobCount)
         settings.setPreBuildScript(preBuildScript)
-        settings.setTestInactivityTimeoutMinutes(testInactivityTimeoutMinutes)
     }
 
     private var header: some View {
@@ -181,16 +132,6 @@ struct SettingsView: View {
             }
 
             Spacer()
-
-            Text(showAdvancedBuildSettings ? "Advanced" : "Standard")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(showAdvancedBuildSettings ? .accentColor : .secondary)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(
-                    Capsule()
-                        .fill(Color(nsColor: .controlBackgroundColor))
-                )
         }
     }
 

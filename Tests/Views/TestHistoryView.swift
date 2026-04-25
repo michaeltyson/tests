@@ -13,6 +13,9 @@ struct TestHistoryView: View {
     @ObservedObject var testRunner: TestRunner
     @State private var selectedTestRun: TestRun?
     @State private var runningPlaceholderTestRun: TestRun?
+    @State private var runTestsInModifierActive = false
+    @State private var localModifierMonitor: Any?
+    @State private var globalModifierMonitor: Any?
     @State private var sidebarWidth: CGFloat = {
         let saved = UserDefaults.standard.double(forKey: "TestHistorySidebarWidth")
         return saved > 0 ? saved : 280
@@ -145,10 +148,8 @@ struct TestHistoryView: View {
                         Text("Test Reports")
                             .font(.system(size: 18, weight: .semibold))
                         Spacer()
-                        Button(action: {
-                            NotificationCenter.default.post(name: NSNotification.Name("RunTests"), object: nil)
-                        }) {
-                            Text("Run Tests")
+                        Button(action: runTestsFromReports) {
+                            Text(runTestsInModifierActive ? "Run Tests In..." : "Run Tests")
                         }
                         .buttonStyle(.borderedProminent)
                         .controlSize(.large)
@@ -203,6 +204,9 @@ struct TestHistoryView: View {
                     }
                 }
             }
+
+            updateRunTestsModifierState()
+            startModifierKeyMonitoring()
         }
         .onChange(of: testRunner.currentTestRun) { _, newTestRun in
             // Auto-select the running test only if nothing is currently selected
@@ -249,6 +253,9 @@ struct TestHistoryView: View {
                 selectedTestRun = currentTestRun
             }
         }
+        .onDisappear {
+            stopModifierKeyMonitoring()
+        }
     }
     
     private func deleteTestRun(_ testRun: TestRun) {
@@ -289,6 +296,53 @@ struct TestHistoryView: View {
             }
         }
         return nil
+    }
+
+    private func runTestsFromReports() {
+        if shouldShowBranchSelection(for: NSApp.currentEvent?.modifierFlags ?? []) {
+            NotificationCenter.default.post(name: NSNotification.Name("ShowBranchSelection"), object: nil)
+        } else {
+            NotificationCenter.default.post(name: NSNotification.Name("RunTests"), object: nil)
+        }
+    }
+
+    private func updateRunTestsModifierState(with modifierFlags: NSEvent.ModifierFlags? = nil) {
+        let flags = modifierFlags ?? NSApp.currentEvent?.modifierFlags ?? []
+        let nextValue = shouldShowBranchSelection(for: flags)
+        if runTestsInModifierActive != nextValue {
+            runTestsInModifierActive = nextValue
+        }
+    }
+
+    private func shouldShowBranchSelection(for modifierFlags: NSEvent.ModifierFlags) -> Bool {
+        modifierFlags.contains(.option) || modifierFlags.contains(.command)
+    }
+
+    private func startModifierKeyMonitoring() {
+        guard localModifierMonitor == nil, globalModifierMonitor == nil else { return }
+
+        localModifierMonitor = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged]) { event in
+            updateRunTestsModifierState(with: event.modifierFlags)
+            return event
+        }
+
+        globalModifierMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.flagsChanged]) { event in
+            updateRunTestsModifierState(with: event.modifierFlags)
+        }
+    }
+
+    private func stopModifierKeyMonitoring() {
+        if let localModifierMonitor {
+            NSEvent.removeMonitor(localModifierMonitor)
+            self.localModifierMonitor = nil
+        }
+
+        if let globalModifierMonitor {
+            NSEvent.removeMonitor(globalModifierMonitor)
+            self.globalModifierMonitor = nil
+        }
+
+        runTestsInModifierActive = false
     }
 }
 
