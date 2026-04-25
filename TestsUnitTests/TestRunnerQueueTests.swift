@@ -366,6 +366,7 @@ final class TestRunnerQueueTests: XCTestCase {
         XCTAssertEqual(content.title, "Tests Started")
         XCTAssertEqual(content.body, "Running tests on branch: develop")
         XCTAssertEqual(content.categoryIdentifier, TestUserNotification.startCategoryIdentifier)
+        XCTAssertEqual(content.userInfo[TestUserNotification.branchUserInfoKey] as? String, "develop")
     }
 
     func testNotificationCategoriesIncludeStartActions() {
@@ -377,8 +378,46 @@ final class TestRunnerQueueTests: XCTestCase {
             startCategory?.actions.map(\.identifier),
             [
                 TestUserNotification.cancelActionIdentifier,
+                TestUserNotification.prohibitBranchActionIdentifier,
                 TestUserNotification.openReportsActionIdentifier
             ]
+        )
+    }
+
+    func testIgnoredAutomaticBranchPrefixesAreParsedAndNormalized() {
+        XCTAssertEqual(
+            SettingsStore.parsedIgnoredAutomaticBranchPrefixes(from: " codex/, , spike/feature , codex/ "),
+            ["codex/", "spike/feature", "codex/"]
+        )
+        XCTAssertEqual(
+            SettingsStore.normalizedIgnoredAutomaticBranchPrefixes(" codex/, , spike/feature , codex/ "),
+            "codex/, spike/feature"
+        )
+    }
+
+    func testAutomaticRunIgnoreMatchingUsesPrefixSemantics() {
+        XCTAssertTrue(
+            SettingsStore.shouldIgnoreAutomaticRun(
+                for: "codex/fix-ci",
+                ignoredPrefixesText: "codex/, release/"
+            )
+        )
+        XCTAssertFalse(
+            SettingsStore.shouldIgnoreAutomaticRun(
+                for: "feature/codex-fix-ci",
+                ignoredPrefixesText: "codex/, release/"
+            )
+        )
+    }
+
+    func testAddingIgnoredAutomaticBranchPrefixAppendsUniquely() {
+        XCTAssertEqual(
+            SettingsStore.addingIgnoredAutomaticBranchPrefix("codex/feature-a", to: "codex/, release/"),
+            "codex/, release/, codex/feature-a"
+        )
+        XCTAssertEqual(
+            SettingsStore.addingIgnoredAutomaticBranchPrefix("codex/", to: "codex/, release/"),
+            "codex/, release/"
         )
     }
 

@@ -224,10 +224,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUserNoti
         print("AppDelegate: Notification userInfo: \(notification.userInfo ?? [:])")
         print("AppDelegate: App is active: \(NSApp.isActive)")
         print("AppDelegate: TestRunner isPaused: \(testRunner.isPaused)")
+
+        let branchName = notification.userInfo?[TestUserNotification.branchUserInfoKey] as? String
+
+        if SettingsStore.shared.shouldIgnoreAutomaticRun(for: branchName) {
+            print("AppDelegate: Ignoring trigger notification for branch prefix match: \(branchName ?? "nil")")
+            return
+        }
         
         // Only run tests if not paused (paused means ignore incoming notifications)
         if !testRunner.isPaused {
-            let branchName = notification.userInfo?["branch"] as? String
             print("AppDelegate: Starting tests with branch: \(branchName ?? "nil")")
             testRunner.runTests(branchName: branchName)
         } else {
@@ -270,9 +276,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUserNoti
             options: [.destructive]
         )
 
+        let prohibitBranchAction = UNNotificationAction(
+            identifier: TestUserNotification.prohibitBranchActionIdentifier,
+            title: "Prohibit This Branch",
+            options: []
+        )
+
         let startCategory = UNNotificationCategory(
             identifier: TestUserNotification.startCategoryIdentifier,
-            actions: [cancelTestsAction, openReportsAction],
+            actions: [cancelTestsAction, prohibitBranchAction, openReportsAction],
             intentIdentifiers: [],
             options: []
         )
@@ -306,6 +318,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUserNoti
             DispatchQueue.main.async { [weak self] in
                 self?.handleCancelTestsNotification()
             }
+        case TestUserNotification.prohibitBranchActionIdentifier:
+            DispatchQueue.main.async { [weak self] in
+                self?.handleProhibitBranchTestsNotification(response)
+            }
         case TestUserNotification.openReportsActionIdentifier, UNNotificationDefaultActionIdentifier:
             DispatchQueue.main.async { [weak self] in
                 self?.showHistoryWindow()
@@ -313,6 +329,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUserNoti
         default:
             break
         }
+    }
+
+    private func handleProhibitBranchTestsNotification(_ response: UNNotificationResponse) {
+        guard let branchName = response.notification.request.content.userInfo[TestUserNotification.branchUserInfoKey] as? String,
+              !branchName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            print("AppDelegate: No branch in notification payload; cannot prohibit branch")
+            return
+        }
+
+        SettingsStore.shared.addIgnoredAutomaticBranchPrefix(branchName)
+        print("AppDelegate: Added ignored automatic branch prefix: \(branchName)")
     }
     
     @objc func showHistoryWindow() {

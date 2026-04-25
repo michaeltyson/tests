@@ -12,6 +12,7 @@ struct SettingsView: View {
     @ObservedObject var settings = SettingsStore.shared
     @State private var repositoryPath: String = ""
     @State private var branchName: String = ""
+    @State private var ignoredAutomaticBranchPrefixes: String = ""
     @State private var parallelTestingEnabled: Bool = true
     @State private var parallelBuildJobCount: Int = 6
     @State private var preBuildScript: String = ""
@@ -104,6 +105,15 @@ struct SettingsView: View {
                 }
             }
 
+            settingsCard(
+                title: "Ignore Automatic Branches",
+                description: "Comma-separated branch prefixes that should ignore incoming post-hook triggers. Manual runs are still allowed."
+            ) {
+                TextField("codex/, spike/, wip/", text: $ignoredAutomaticBranchPrefixes)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(.body, design: .monospaced))
+            }
+
             HStack {
                 Spacer()
                 Button("Cancel") {
@@ -126,6 +136,7 @@ struct SettingsView: View {
         .onAppear {
             repositoryPath = settings.repositoryPath
             branchName = settings.branchName ?? ""
+            ignoredAutomaticBranchPrefixes = settings.ignoredAutomaticBranchPrefixes
             parallelTestingEnabled = settings.parallelTestingEnabled
             parallelBuildJobCount = settings.parallelBuildJobCount
             preBuildScript = settings.preBuildScript
@@ -152,6 +163,7 @@ struct SettingsView: View {
     private func saveSettings() {
         settings.setRepositoryPath(repositoryPath)
         settings.setBranchName(branchName.isEmpty ? nil : branchName)
+        settings.setIgnoredAutomaticBranchPrefixes(ignoredAutomaticBranchPrefixes)
         settings.setParallelTestingEnabled(parallelTestingEnabled)
         settings.setParallelBuildJobCount(parallelBuildJobCount)
         settings.setPreBuildScript(preBuildScript)

@@ -17,7 +17,9 @@ enum TestUserNotification {
     static let errorCategoryIdentifier = "TEST_ERROR"
 
     static let cancelActionIdentifier = "CANCEL_TESTS"
+    static let prohibitBranchActionIdentifier = "PROHIBIT_BRANCH_TESTS"
     static let openReportsActionIdentifier = "OPEN_REPORTS"
+    static let branchUserInfoKey = "branch"
 }
 
 class TestRunner: ObservableObject {
@@ -2001,6 +2003,7 @@ class TestRunner: ObservableObject {
         content.body = "Running tests on branch: \(branchName)"
         content.sound = .default
         content.categoryIdentifier = TestUserNotification.startCategoryIdentifier
+        content.userInfo = [TestUserNotification.branchUserInfoKey: branchName]
         return content
     }
     

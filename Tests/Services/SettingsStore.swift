@@ -14,6 +14,7 @@ class SettingsStore: ObservableObject {
     private enum Keys {
         static let repositoryPath = "repositoryPath"
         static let branchName = "branchName"
+        static let ignoredAutomaticBranchPrefixes = "ignoredAutomaticBranchPrefixes"
         static let parallelTestingEnabled = "parallelTestingEnabled"
         static let parallelBuildJobCount = "parallelBuildJobCount"
         static let preBuildScript = "preBuildScript"
@@ -40,6 +41,17 @@ class SettingsStore: ObservableObject {
                 UserDefaults.standard.set(branch, forKey: Keys.branchName)
             } else {
                 UserDefaults.standard.removeObject(forKey: Keys.branchName)
+            }
+        }
+    }
+
+    @Published var ignoredAutomaticBranchPrefixes: String {
+        didSet {
+            let normalizedPrefixes = Self.normalizedIgnoredAutomaticBranchPrefixes(ignoredAutomaticBranchPrefixes)
+            if normalizedPrefixes.isEmpty {
+                UserDefaults.standard.removeObject(forKey: Keys.ignoredAutomaticBranchPrefixes)
+            } else {
+                UserDefaults.standard.set(normalizedPrefixes, forKey: Keys.ignoredAutomaticBranchPrefixes)
             }
         }
     }
@@ -76,6 +88,9 @@ class SettingsStore: ObservableObject {
     private init() {
         self.repositoryPath = UserDefaults.standard.string(forKey: Keys.repositoryPath) ?? ""
         self.branchName = UserDefaults.standard.string(forKey: Keys.branchName)
+        self.ignoredAutomaticBranchPrefixes = Self.normalizedIgnoredAutomaticBranchPrefixes(
+            UserDefaults.standard.string(forKey: Keys.ignoredAutomaticBranchPrefixes) ?? ""
+        )
         self.parallelTestingEnabled = UserDefaults.standard.object(forKey: Keys.parallelTestingEnabled) as? Bool ?? true
         let storedParallelBuildJobCount = UserDefaults.standard.object(forKey: Keys.parallelBuildJobCount) as? Int ?? 6
         self.parallelBuildJobCount = Self.sanitizedParallelBuildJobCount(storedParallelBuildJobCount)
@@ -92,6 +107,27 @@ class SettingsStore: ObservableObject {
         branchName = branch
     }
 
+    func setIgnoredAutomaticBranchPrefixes(_ prefixes: String) {
+        ignoredAutomaticBranchPrefixes = Self.normalizedIgnoredAutomaticBranchPrefixes(prefixes)
+    }
+
+    func addIgnoredAutomaticBranchPrefix(_ prefix: String) {
+        let updatedPrefixes = Self.addingIgnoredAutomaticBranchPrefix(
+            prefix,
+            to: ignoredAutomaticBranchPrefixes
+        )
+        guard updatedPrefixes != ignoredAutomaticBranchPrefixes else { return }
+        ignoredAutomaticBranchPrefixes = updatedPrefixes
+    }
+
+    func shouldIgnoreAutomaticRun(for branchName: String?) -> Bool {
+        guard let branchName else { return false }
+        return Self.shouldIgnoreAutomaticRun(
+            for: branchName,
+            ignoredPrefixesText: ignoredAutomaticBranchPrefixes
+        )
+    }
+
     func setParallelTestingEnabled(_ enabled: Bool) {
         parallelTestingEnabled = enabled
     }
@@ -106,6 +142,38 @@ class SettingsStore: ObservableObject {
 
     func setTestInactivityTimeoutMinutes(_ minutes: Int) {
         testInactivityTimeoutMinutes = Self.sanitizedTestInactivityTimeoutMinutes(minutes)
+    }
+
+    static func parsedIgnoredAutomaticBranchPrefixes(from value: String) -> [String] {
+        value
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
+    static func normalizedIgnoredAutomaticBranchPrefixes(_ value: String) -> String {
+        var seen = Set<String>()
+        let uniquePrefixes = parsedIgnoredAutomaticBranchPrefixes(from: value).filter { seen.insert($0).inserted }
+        return uniquePrefixes.joined(separator: ", ")
+    }
+
+    static func shouldIgnoreAutomaticRun(for branchName: String, ignoredPrefixesText: String) -> Bool {
+        let trimmedBranch = branchName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedBranch.isEmpty else { return false }
+
+        return parsedIgnoredAutomaticBranchPrefixes(from: ignoredPrefixesText).contains { prefix in
+            trimmedBranch.hasPrefix(prefix)
+        }
+    }
+
+    static func addingIgnoredAutomaticBranchPrefix(_ prefix: String, to existingPrefixesText: String) -> String {
+        let prefix = prefix.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !prefix.isEmpty else {
+            return normalizedIgnoredAutomaticBranchPrefixes(existingPrefixesText)
+        }
+
+        let prefixes = parsedIgnoredAutomaticBranchPrefixes(from: existingPrefixesText) + [prefix]
+        return normalizedIgnoredAutomaticBranchPrefixes(prefixes.joined(separator: ","))
     }
     
     var isConfigured: Bool {
