@@ -25,6 +25,27 @@ struct TestDetailView: View {
         return extractFailureText(from: output)
     }
 
+    private var warningCopyText: String? {
+        guard testRun.status == .warnings,
+              let output = outputLog,
+              !output.isEmpty else {
+            return nil
+        }
+        return extractWarningText(from: output)
+    }
+
+    private var diagnosticCopyAction: (title: String, text: String)? {
+        if let failureCopyText, !failureCopyText.isEmpty {
+            return ("Copy Failures", failureCopyText)
+        }
+
+        if let warningCopyText, !warningCopyText.isEmpty {
+            return ("Copy Warnings", warningCopyText)
+        }
+
+        return nil
+    }
+
     private var abbreviatedCommitSHA: String? {
         guard let commitSHA = testRun.commitSHA?.trimmingCharacters(in: .whitespacesAndNewlines),
               !commitSHA.isEmpty else {
@@ -81,9 +102,9 @@ struct TestDetailView: View {
                     
                     Spacer()
                     HStack(spacing: 8) {
-                        if let failureCopyText, !failureCopyText.isEmpty {
-                            Button(action: { copyFailuresToClipboard(failureCopyText) }) {
-                                Text(copiedFailures ? "Copied!" : "Copy Failures")
+                        if let diagnosticCopyAction {
+                            Button(action: { copyFailuresToClipboard(diagnosticCopyAction.text) }) {
+                                Text(copiedFailures ? "Copied!" : diagnosticCopyAction.title)
                             }
                             .buttonStyle(.bordered)
                         }
@@ -376,6 +397,23 @@ struct TestDetailView: View {
         guard !failureLines.isEmpty else { return nil }
         return failureLines.joined(separator: "\n")
     }
+
+    private func extractWarningText(from text: String) -> String? {
+        let displayedText = removeANSICodes(from: text)
+        let lines = displayedText.components(separatedBy: .newlines)
+        guard !lines.isEmpty else { return nil }
+
+        var seenLines = Set<String>()
+        let warningLines = lines.compactMap { line -> String? in
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard isWarningLine(trimmed), !trimmed.isEmpty else { return nil }
+            guard seenLines.insert(trimmed).inserted else { return nil }
+            return trimmed
+        }
+
+        guard !warningLines.isEmpty else { return nil }
+        return warningLines.joined(separator: "\n")
+    }
     
     private func extractFailureSummaryBlock(from text: String) -> String? {
         let summaryHeader = "Test failure summary from "
@@ -420,6 +458,17 @@ struct TestDetailView: View {
         }
         
         return false
+    }
+
+    private func isWarningLine(_ line: String) -> Bool {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+
+        if trimmed.contains("⚠️") {
+            return true
+        }
+
+        return trimmed.localizedCaseInsensitiveContains("warning:")
     }
     
     private func findFailureRanges(in displayedText: String, originalText: String) {
