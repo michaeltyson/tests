@@ -13,6 +13,7 @@ struct TestDetailView: View {
     @State private var copied = false
     @State private var copiedFailures = false
     @State private var failureRanges: [NSRange] = []
+    @State private var highlightRangesAsWarnings = false
     @State private var currentFailureIndex: Int = -1
     @State private var hasAutoScrolled = false
     
@@ -198,6 +199,7 @@ struct TestDetailView: View {
                     TerminalOutputView(
                         text: output,
                         failureRanges: failureRanges,
+                        highlightsWarnings: highlightRangesAsWarnings,
                         currentFailureIndex: $currentFailureIndex
                     )
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
@@ -516,13 +518,43 @@ struct TestDetailView: View {
         
         // Sort ranges by location
         ranges.sort { $0.location < $1.location }
+
+        let foundFailureRanges = !ranges.isEmpty
+        if !foundFailureRanges && testRun.status == .warnings {
+            ranges = findWarningRanges(in: displayedText, nsString: nsString, fullRange: fullRange)
+        }
         
         failureRanges = ranges
+        highlightRangesAsWarnings = !foundFailureRanges && !ranges.isEmpty
         if !ranges.isEmpty {
             currentFailureIndex = 0
         } else {
             currentFailureIndex = -1
         }
+    }
+
+    private func findWarningRanges(in displayedText: String, nsString: NSString, fullRange: NSRange) -> [NSRange] {
+        var ranges: [NSRange] = []
+        let warningPattern = #"⚠️|warning:"#
+
+        guard let regex = try? NSRegularExpression(pattern: warningPattern, options: [.caseInsensitive]) else {
+            return ranges
+        }
+
+        let matches = regex.matches(in: displayedText, options: [], range: fullRange)
+        for match in matches {
+            let lineRange = nsString.lineRange(for: match.range)
+            let line = nsString.substring(with: lineRange).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard isWarningLine(line) else { continue }
+
+            let scrollRange = NSRange(location: match.range.location, length: 0)
+            if !ranges.contains(where: { abs($0.location - scrollRange.location) < 50 }) {
+                ranges.append(scrollRange)
+            }
+        }
+
+        ranges.sort { $0.location < $1.location }
+        return ranges
     }
     
     private func scrollToPreviousFailure() {
@@ -560,17 +592,20 @@ struct TestDetailView: View {
 struct TerminalOutputView: NSViewRepresentable {
     let text: String
     let failureRanges: [NSRange]
+    let highlightsWarnings: Bool
     let followsTail: Bool
     @Binding var currentFailureIndex: Int
     
     init(
         text: String,
         failureRanges: [NSRange] = [],
+        highlightsWarnings: Bool = false,
         followsTail: Bool = false,
         currentFailureIndex: Binding<Int> = .constant(-1)
     ) {
         self.text = text
         self.failureRanges = failureRanges
+        self.highlightsWarnings = highlightsWarnings
         self.followsTail = followsTail
         self._currentFailureIndex = currentFailureIndex
     }
@@ -649,7 +684,7 @@ struct TerminalOutputView: NSViewRepresentable {
         context.coordinator.keyEventMonitor = monitor
         
         // Set initial text and layout
-        let attributedString = parseANSI(text, failureRanges: failureRanges)
+        let attributedString = parseANSI(text, failureRanges: failureRanges, highlightsWarnings: highlightsWarnings)
         textView.textStorage?.setAttributedString(attributedString)
         
         // Update width after initial layout
@@ -684,7 +719,7 @@ struct TerminalOutputView: NSViewRepresentable {
         let isAtBottom = isScrolledToBottom(textView: textView, scrollView: nsView)
         
         // Update text content with failure highlighting
-        let attributedString = parseANSI(text, failureRanges: failureRanges)
+        let attributedString = parseANSI(text, failureRanges: failureRanges, highlightsWarnings: highlightsWarnings)
         textView.textStorage?.setAttributedString(attributedString)
         
         // Update layout and frame
@@ -872,7 +907,7 @@ struct TerminalOutputView: NSViewRepresentable {
         return lhs.text == rhs.text && lhs.followsTail == rhs.followsTail
     }
     
-    private func parseANSI(_ text: String, failureRanges: [NSRange] = []) -> NSAttributedString {
+    private func parseANSI(_ text: String, failureRanges: [NSRange] = [], highlightsWarnings: Bool = false) -> NSAttributedString {
         // Use a more efficient parsing approach
         let result = NSMutableAttributedString()
         let font = terminalFont
@@ -930,15 +965,15 @@ struct TerminalOutputView: NSViewRepresentable {
         }
         
         // Apply failure line highlighting
-        applyFailureHighlighting(to: result, failureRanges: failureRanges)
+        applyFailureHighlighting(to: result, failureRanges: failureRanges, highlightsWarnings: highlightsWarnings)
         
         return result
     }
     
-    private func applyFailureHighlighting(to attributedString: NSMutableAttributedString, failureRanges: [NSRange]) {
+    private func applyFailureHighlighting(to attributedString: NSMutableAttributedString, failureRanges: [NSRange], highlightsWarnings: Bool = false) {
         guard !failureRanges.isEmpty else { return }
         
-        let redBackground = NSColor.systemRed.withAlphaComponent(0.15)
+        let background = (highlightsWarnings ? NSColor.systemYellow : NSColor.systemRed).withAlphaComponent(0.15)
         let string = attributedString.string as NSString
         
         for failureRange in failureRanges {
@@ -951,7 +986,7 @@ struct TerminalOutputView: NSViewRepresentable {
                     location: lineRange.location,
                     length: min(lineRange.length, attributedString.length - lineRange.location)
                 )
-                attributedString.addAttribute(.backgroundColor, value: redBackground, range: clampedRange)
+                attributedString.addAttribute(.backgroundColor, value: background, range: clampedRange)
             }
         }
     }
