@@ -246,6 +246,19 @@ class TestRunner: ObservableObject {
                     )
                     return
                 }
+            } else {
+                DispatchQueue.main.async {
+                    self.output += "Discarding local workspace changes...\n"
+                }
+                print("TestRunner: Discarding local workspace changes before checkout")
+                if !self.discardWorkspaceLocalChangesSync(in: branchWorkspace) {
+                    self.abortRun(removeCurrentRun: true)
+                    self.showError(
+                        "Failed to clean workspace",
+                        message: "Could not discard local changes before checking out the requested ref."
+                    )
+                    return
+                }
             }
 
             // Checkout selected ref (branch or commit SHA)
@@ -258,6 +271,19 @@ class TestRunner: ObservableObject {
                 self.showError(
                     "Failed to checkout ref",
                     message: "Could not checkout '\(branchToUse)'. Please verify the branch name, commit SHA, or commit message selection."
+                )
+                return
+            }
+
+            DispatchQueue.main.async {
+                self.output += "Ensuring exact checkout state...\n"
+            }
+            print("TestRunner: Ensuring workspace has no local changes after checkout")
+            if !self.discardWorkspaceLocalChangesSync(in: branchWorkspace) {
+                self.abortRun(removeCurrentRun: true)
+                self.showError(
+                    "Failed to clean workspace",
+                    message: "Could not discard local changes after checking out the requested ref."
                 )
                 return
             }
@@ -800,14 +826,26 @@ class TestRunner: ObservableObject {
         return resetResult.success
     }
 
-    private func cleanWorkspaceStateSync(in directory: URL) -> Bool {
-        let resetResult = runGitCommandSync(["reset", "--hard", "HEAD"], in: directory)
-        guard resetResult.success else {
-            return false
+    static func discardWorkspaceLocalChangesCommandArguments() -> [[String]] {
+        [
+            ["reset", "--hard", "HEAD"],
+            ["clean", "-ffd"]
+        ]
+    }
+
+    private func discardWorkspaceLocalChangesSync(in directory: URL) -> Bool {
+        for arguments in Self.discardWorkspaceLocalChangesCommandArguments() {
+            let result = runGitCommandSync(arguments, in: directory)
+            guard result.success else {
+                return false
+            }
         }
 
-        let cleanResult = runGitCommandSync(["clean", "-ffd"], in: directory)
-        guard cleanResult.success else {
+        return true
+    }
+
+    private func cleanWorkspaceStateSync(in directory: URL) -> Bool {
+        guard discardWorkspaceLocalChangesSync(in: directory) else {
             return false
         }
 

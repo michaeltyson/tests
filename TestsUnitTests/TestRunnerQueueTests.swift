@@ -503,6 +503,46 @@ final class TestRunnerQueueTests: XCTestCase {
         )
     }
 
+    func testWorkspaceLocalChangeCleanupDiscardsTrackedAndUntrackedFiles() throws {
+        XCTAssertEqual(
+            TestRunner.discardWorkspaceLocalChangesCommandArguments(),
+            [
+                ["reset", "--hard", "HEAD"],
+                ["clean", "-ffd"]
+            ]
+        )
+
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        try runGit(["init"], in: root)
+        try runGit(["config", "user.email", "tests@example.com"], in: root)
+        try runGit(["config", "user.name", "Tests"], in: root)
+        let trackedFile = root.appendingPathComponent("tracked.txt")
+        try "committed\n".write(to: trackedFile, atomically: true, encoding: .utf8)
+        try runGit(["add", "tracked.txt"], in: root)
+        try runGit(["commit", "-m", "Initial commit"], in: root)
+
+        try "dirty\n".write(to: trackedFile, atomically: true, encoding: .utf8)
+        try "untracked\n".write(
+            to: root.appendingPathComponent("untracked.txt"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        for arguments in TestRunner.discardWorkspaceLocalChangesCommandArguments() {
+            try runGit(arguments, in: root)
+        }
+
+        let status = try runGit(["status", "--short"], in: root)
+        XCTAssertEqual(status, "")
+        XCTAssertEqual(try String(contentsOf: trackedFile, encoding: .utf8), "committed\n")
+    }
+
     func testSourceRemoteTrackingRefspecMirrorsRemoteOnlyBranches() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
