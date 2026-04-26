@@ -70,7 +70,10 @@ struct TestHistoryView: View {
         Binding(
             get: { sidebarWidth },
             set: { newWidth in
-                persistedSidebarWidth = Double(Self.clampedSidebarWidth(newWidth))
+                let clampedWidth = Self.clampedSidebarWidth(newWidth)
+                persistedSidebarWidth = Double(clampedWidth)
+                UserDefaults.standard.set(Double(clampedWidth), forKey: TestHistoryDefaults.sidebarWidthKey)
+                UserDefaults.standard.synchronize()
             }
         )
     }
@@ -81,18 +84,10 @@ struct TestHistoryView: View {
             sidebar
             .frame(
                 minWidth: TestHistoryDefaults.minimumSidebarWidth,
+                idealWidth: sidebarWidth,
                 maxWidth: TestHistoryDefaults.maximumSidebarWidth
             )
             .background(.thinMaterial)
-            .background(GeometryReader { geometry in
-                Color.clear.preference(key: SidebarWidthPreferenceKey.self, value: geometry.size.width)
-            })
-            .onPreferenceChange(SidebarWidthPreferenceKey.self) { newWidth in
-                let clampedWidth = Self.clampedSidebarWidth(newWidth)
-                if abs(clampedWidth - sidebarWidth) > 1.0 {
-                    persistedSidebarWidth = Double(clampedWidth)
-                }
-            }
             
             // Detail view
             VStack(spacing: 0) {
@@ -213,7 +208,9 @@ struct TestHistoryView: View {
         }
         .frame(minWidth: 800, minHeight: 600)
         .ignoresSafeArea(.all, edges: .top)
-        .background(SplitViewDividerController(sidebarWidth: sidebarWidthBinding))
+        .background(
+            SplitViewDividerController(sidebarWidth: sidebarWidthBinding)
+        )
         .onAppear {
             // Backup approach: set divider position when view appears
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
@@ -663,14 +660,6 @@ struct TestRunRow: View {
     }
 }
 
-// Preference key to track sidebar width changes
-struct SidebarWidthPreferenceKey: PreferenceKey {
-    static var defaultValue: CGFloat = 280
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
-    }
-}
-
 // Helper view to programmatically set split view divider position
 struct SplitViewDividerController: NSViewRepresentable {
     @Binding var sidebarWidth: CGFloat
@@ -684,7 +673,10 @@ struct SplitViewDividerController: NSViewRepresentable {
     func updateNSView(_ nsView: NSView, context: Context) {
         // Use multiple attempts with delays to find the split view
         // The view hierarchy might not be ready immediately
-        context.coordinator.setupObserver(nsView: nsView, sidebarWidth: $sidebarWidth)
+        context.coordinator.setupObserver(
+            nsView: nsView,
+            sidebarWidth: $sidebarWidth
+        )
     }
     
     func makeCoordinator() -> Coordinator {
@@ -695,20 +687,17 @@ struct SplitViewDividerController: NSViewRepresentable {
         var observer: NSObjectProtocol?
         var hasSetInitialPosition = false
         
-        func setupObserver(nsView: NSView, sidebarWidth: Binding<CGFloat>) {
+        func setupObserver(
+            nsView: NSView,
+            sidebarWidth: Binding<CGFloat>
+        ) {
             // Try multiple times with increasing delays
             let attempts = [0.0, 0.1, 0.3, 0.5]
             for delay in attempts {
                 DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-                    // Search from superview (the background view is a child of the split view's container)
-                    let splitView = self.findSplitView(in: nsView.superview)
+                    let splitView = self.findSplitView(around: nsView)
                     
                     if let splitView = splitView {
-                        // Set autosave name for automatic persistence
-                        if splitView.autosaveName == nil || splitView.autosaveName!.isEmpty {
-                            splitView.autosaveName = "TestHistorySidebar"
-                        }
-                        
                         // Set initial position only once
                         if !self.hasSetInitialPosition {
                             let currentPosition = splitView.arrangedSubviews.first?.frame.width ?? 0
@@ -718,22 +707,14 @@ struct SplitViewDividerController: NSViewRepresentable {
                             self.hasSetInitialPosition = true
                         }
                         
-                        // Observe frame changes to track divider movement
                         if self.observer == nil {
                             self.observer = NotificationCenter.default.addObserver(
-                                forName: NSView.frameDidChangeNotification,
+                                forName: NSSplitView.didResizeSubviewsNotification,
                                 object: splitView,
                                 queue: .main
-                            ) { [weak splitView] _ in
-                                guard let splitView = splitView else { return }
-                                if splitView.arrangedSubviews.count > 0 {
-                                    let newWidth = splitView.arrangedSubviews[0].frame.width
-                                    if abs(newWidth - sidebarWidth.wrappedValue) > 1.0 &&
-                                        newWidth >= TestHistoryDefaults.minimumSidebarWidth &&
-                                        newWidth <= TestHistoryDefaults.maximumSidebarWidth {
-                                        sidebarWidth.wrappedValue = newWidth
-                                    }
-                                }
+                            ) { [weak self, weak splitView] _ in
+                                guard let self, let splitView else { return }
+                                self.recordSidebarWidth(from: splitView, sidebarWidth: sidebarWidth)
                             }
                         }
                         return // Found it, stop trying
@@ -748,6 +729,31 @@ struct SplitViewDividerController: NSViewRepresentable {
             }
         }
         
+        private func recordSidebarWidth(from splitView: NSSplitView, sidebarWidth: Binding<CGFloat>) {
+            guard let sidebarView = splitView.arrangedSubviews.first else { return }
+            let newWidth = sidebarView.frame.width
+            if abs(newWidth - sidebarWidth.wrappedValue) > 1.0 &&
+                newWidth >= TestHistoryDefaults.minimumSidebarWidth &&
+                newWidth <= TestHistoryDefaults.maximumSidebarWidth {
+                sidebarWidth.wrappedValue = newWidth
+            }
+        }
+
+        private func findSplitView(around view: NSView) -> NSSplitView? {
+            var candidate: NSView? = view
+            while let currentView = candidate {
+                if let splitView = currentView as? NSSplitView {
+                    return splitView
+                }
+                if let splitView = findSplitView(in: currentView) {
+                    return splitView
+                }
+                candidate = currentView.superview
+            }
+
+            return view.window?.contentView.flatMap { findSplitView(in: $0) }
+        }
+
         private func findSplitView(in view: NSView?, depth: Int = 0) -> NSSplitView? {
             // Prevent infinite recursion with depth limit
             guard depth < 20, let view = view else { return nil }
