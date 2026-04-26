@@ -81,6 +81,11 @@ struct AppMain {
                 for instance in otherInstances {
                     print("AppMain: Other instance PID: \(instance.processIdentifier), finishedLaunching: \(instance.isFinishedLaunching), terminated: \(instance.isTerminated)")
                 }
+                DistributedNotificationCenter.default().post(
+                    name: .showReportsWindowFromRelaunch,
+                    object: nil,
+                    userInfo: nil
+                )
                 app.terminate(nil)
                 return
             }

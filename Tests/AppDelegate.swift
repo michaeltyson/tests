@@ -10,6 +10,10 @@ import SwiftUI
 import Combine
 import UserNotifications
 
+extension Notification.Name {
+    static let showReportsWindowFromRelaunch = Notification.Name("com.atastypixel.Tests.ShowReportsWindowFromRelaunch")
+}
+
 class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUserNotificationCenterDelegate {
     let testRunner = TestRunner()
     let testResultStore = TestResultStore()
@@ -156,6 +160,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUserNoti
             queue: .main
         ) { [weak self] notification in
             self?.handleTriggerNotification(notification)
+        }
+
+        DistributedNotificationCenter.default().addObserver(
+            forName: .showReportsWindowFromRelaunch,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.showHistoryWindow()
         }
         
         // Listen for run tests from menu bar
