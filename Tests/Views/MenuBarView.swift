@@ -98,6 +98,7 @@ class MenuBarManager: ObservableObject {
         
         menu?.addItem(NSMenuItem.separator())
         menu?.addItem(NSMenuItem(title: "Test Reports", action: #selector(showHistory), keyEquivalent: "h"))
+        menu?.addItem(NSMenuItem(title: "Setup Assistant...", action: #selector(showOnboarding), keyEquivalent: ""))
         menu?.addItem(NSMenuItem(title: "Settings...", action: #selector(showSettings), keyEquivalent: ","))
         menu?.addItem(NSMenuItem.separator())
         menu?.addItem(NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q"))
@@ -295,6 +296,10 @@ class MenuBarManager: ObservableObject {
     
     @objc func showSettings() {
         NotificationCenter.default.post(name: NSNotification.Name("ShowSettingsWindow"), object: nil)
+    }
+
+    @objc func showOnboarding() {
+        NotificationCenter.default.post(name: NSNotification.Name("ShowOnboardingWindow"), object: nil)
     }
     
     @objc func quit() {
