@@ -156,6 +156,7 @@ private struct TestGraphCommitRow: View {
                             .padding(.vertical, 2)
                             .background(Color.accentColor)
                             .cornerRadius(4)
+                            .help(branchName)
                     }
 
                     Text(commit.subject)
