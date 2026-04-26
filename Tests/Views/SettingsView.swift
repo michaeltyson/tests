@@ -303,6 +303,23 @@ struct SettingsView: View {
         }
     }
 
+    private func wrapExistingPostHook() {
+        let trimmedPath = repositoryPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedPath.isEmpty else {
+            refreshPostHookState()
+            return
+        }
+
+        do {
+            try PostHookInstaller.wrapExistingHook(in: URL(fileURLWithPath: trimmedPath, isDirectory: true))
+            postHookState = .installed
+            postHookMessage = PostHookInstaller.State.installed.message
+        } catch {
+            postHookState = .installFailed(error.localizedDescription)
+            postHookMessage = error.localizedDescription
+        }
+    }
+
     private func uninstallPostHook() {
         let trimmedPath = repositoryPath.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedPath.isEmpty else {
@@ -312,8 +329,7 @@ struct SettingsView: View {
 
         do {
             try PostHookInstaller.uninstall(in: URL(fileURLWithPath: trimmedPath, isDirectory: true))
-            postHookState = .notInstalled
-            postHookMessage = PostHookInstaller.State.notInstalled.message
+            refreshPostHookState()
         } catch {
             postHookState = .installFailed(error.localizedDescription)
             postHookMessage = error.localizedDescription
@@ -370,24 +386,28 @@ struct SettingsView: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             HStack(spacing: 10) {
-                Button("Install Post-Hook Script") {
-                    installPostHook()
+                if postHookState.canUninstall {
+                    Button("Uninstall") {
+                        uninstallPostHook()
+                    }
+                    .buttonStyle(SettingsSubtleActionButtonStyle())
+                } else if postHookState.canWrap {
+                    Button("Wrap Existing Hook") {
+                        wrapExistingPostHook()
+                    }
+                    .buttonStyle(SettingsSubtleActionButtonStyle())
+                } else {
+                    Button("Install Post-Hook Script") {
+                        installPostHook()
+                    }
+                    .buttonStyle(SettingsSubtleActionButtonStyle())
+                    .disabled(!postHookState.canInstall)
                 }
-                .disabled(!postHookState.canInstall)
 
                 Text(postHookMessage)
                     .font(.system(size: 12))
                     .foregroundColor(postHookState.isError ? .red : .secondary)
                     .fixedSize(horizontal: false, vertical: true)
-
-                if postHookState.canUninstall {
-                    Button("Uninstall") {
-                        uninstallPostHook()
-                    }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(.secondary)
-                }
             }
         }
     }
@@ -477,6 +497,67 @@ struct SettingsView: View {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .stroke(Color.primary.opacity(0.06), lineWidth: 1)
         )
+    }
+}
+
+private struct SettingsSubtleActionButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        SettingsSubtleActionButton(configuration: configuration)
+    }
+
+    private struct SettingsSubtleActionButton: View {
+        @Environment(\.isEnabled) private var isEnabled
+        @State private var isHovered = false
+
+        let configuration: ButtonStyle.Configuration
+
+        var body: some View {
+            configuration.label
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(foregroundColor)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(backgroundColor)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .strokeBorder(borderColor, lineWidth: 1)
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .contentShape(RoundedRectangle(cornerRadius: 6))
+                .opacity(configuration.isPressed ? 0.78 : 1)
+                .animation(.easeOut(duration: 0.12), value: isHovered)
+                .animation(.easeOut(duration: 0.08), value: configuration.isPressed)
+                .onHover { hovering in
+                    isHovered = hovering
+                }
+        }
+
+        private var foregroundColor: Color {
+            if !isEnabled {
+                return .secondary.opacity(0.65)
+            }
+            return isHovered ? .accentColor : .primary
+        }
+
+        private var backgroundColor: Color {
+            if !isEnabled {
+                return Color.secondary.opacity(0.05)
+            }
+            if configuration.isPressed {
+                return Color.accentColor.opacity(0.24)
+            }
+            if isHovered {
+                return Color.accentColor.opacity(0.14)
+            }
+            return Color.accentColor.opacity(0.08)
+        }
+
+        private var borderColor: Color {
+            if !isEnabled {
+                return Color.secondary.opacity(0.08)
+            }
+            return isHovered ? Color.accentColor.opacity(0.38) : Color.accentColor.opacity(0.22)
+        }
     }
 }
 

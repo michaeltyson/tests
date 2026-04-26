@@ -6,6 +6,9 @@
 import Foundation
 
 enum PostHookInstaller {
+    private static let wrapperMarker = "# Managed by Tests"
+    private static let originalHookName = "post-commit.tests-original"
+
     enum State: Equatable {
         case unknown
         case missingRepository
@@ -22,6 +25,10 @@ enum PostHookInstaller {
 
         var canUninstall: Bool {
             self == .installed
+        }
+
+        var canWrap: Bool {
+            self == .existingHook
         }
 
         var isError: Bool {
@@ -61,6 +68,7 @@ enum PostHookInstaller {
         case hookAlreadyExists
         case hookNotInstalled
         case hookNotManaged
+        case backupAlreadyExists
 
         var errorDescription: String? {
             switch self {
@@ -74,6 +82,8 @@ enum PostHookInstaller {
                 return "Post-commit hook is not installed."
             case .hookNotManaged:
                 return "Existing post-commit hook was not installed by Tests."
+            case .backupAlreadyExists:
+                return "A saved original post-commit hook already exists."
             }
         }
     }
@@ -91,7 +101,7 @@ enum PostHookInstaller {
             return .notInstalled
         }
 
-        return isInstalledBundledHook(at: hookURL) ? .installed : .existingHook
+        return isInstalledBundledHook(at: hookURL) || isManagedWrapper(at: hookURL) ? .installed : .existingHook
     }
 
     static func install(in repositoryURL: URL) throws {
@@ -118,6 +128,43 @@ enum PostHookInstaller {
         )
     }
 
+    static func wrapExistingHook(in repositoryURL: URL) throws {
+        guard let sourceURL = bundledPostCommitHookURL() else {
+            throw InstallError.missingBundledHook
+        }
+
+        guard let hookURL = postCommitHookURL(in: repositoryURL) else {
+            throw InstallError.missingGitRepository
+        }
+
+        let fileManager = FileManager.default
+        guard fileManager.fileExists(atPath: hookURL.path) else {
+            throw InstallError.hookNotInstalled
+        }
+
+        guard !isInstalledBundledHook(at: hookURL), !isManagedWrapper(at: hookURL) else {
+            throw InstallError.hookAlreadyExists
+        }
+
+        let originalURL = originalHookURL(for: hookURL)
+        guard !fileManager.fileExists(atPath: originalURL.path) else {
+            throw InstallError.backupAlreadyExists
+        }
+
+        try fileManager.moveItem(at: hookURL, to: originalURL)
+        do {
+            let wrapper = wrapperScript(originalHookName: originalHookName, bundledHookURL: sourceURL)
+            try wrapper.write(to: hookURL, atomically: true, encoding: .utf8)
+            try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: hookURL.path)
+        } catch {
+            if fileManager.fileExists(atPath: hookURL.path) {
+                try? fileManager.removeItem(at: hookURL)
+            }
+            try? fileManager.moveItem(at: originalURL, to: hookURL)
+            throw error
+        }
+    }
+
     static func uninstall(in repositoryURL: URL) throws {
         guard let hookURL = postCommitHookURL(in: repositoryURL) else {
             throw InstallError.missingGitRepository
@@ -128,11 +175,23 @@ enum PostHookInstaller {
             throw InstallError.hookNotInstalled
         }
 
-        guard isInstalledBundledHook(at: hookURL) else {
-            throw InstallError.hookNotManaged
+        if isInstalledBundledHook(at: hookURL) {
+            try fileManager.removeItem(at: hookURL)
+            return
         }
 
-        try fileManager.removeItem(at: hookURL)
+        if isManagedWrapper(at: hookURL) {
+            let originalURL = originalHookURL(for: hookURL)
+            guard fileManager.fileExists(atPath: originalURL.path) else {
+                throw InstallError.hookNotManaged
+            }
+
+            try fileManager.removeItem(at: hookURL)
+            try fileManager.moveItem(at: originalURL, to: hookURL)
+            return
+        }
+
+        throw InstallError.hookNotManaged
     }
 
     private static func bundledPostCommitHookURL() -> URL? {
@@ -141,6 +200,7 @@ enum PostHookInstaller {
         }
 
         let developmentURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
             .deletingLastPathComponent()
             .appendingPathComponent("Resources/post-commit")
         return FileManager.default.fileExists(atPath: developmentURL.path) ? developmentURL : nil
@@ -171,6 +231,43 @@ enum PostHookInstaller {
         let destinationURL = URL(fileURLWithPath: destination, relativeTo: hookURL.deletingLastPathComponent())
             .standardizedFileURL
         return destinationURL.path == bundledURL.standardizedFileURL.path
+    }
+
+    private static func isManagedWrapper(at hookURL: URL) -> Bool {
+        guard let content = try? String(contentsOf: hookURL, encoding: .utf8) else { return false }
+        return content.contains(wrapperMarker) && content.contains(originalHookName)
+    }
+
+    private static func originalHookURL(for hookURL: URL) -> URL {
+        hookURL.deletingLastPathComponent().appendingPathComponent(originalHookName)
+    }
+
+    private static func wrapperScript(originalHookName: String, bundledHookURL: URL) -> String {
+        """
+        #!/bin/sh
+        \(wrapperMarker)
+        # Original hook: \(originalHookName)
+
+        hook_dir="$(CDPATH= cd "$(dirname "$0")" && pwd)"
+        original_hook="$hook_dir/\(originalHookName)"
+        tests_hook=\(shellQuotedPath(bundledHookURL.path))
+
+        original_status=0
+        if [ -x "$original_hook" ]; then
+            "$original_hook" "$@"
+            original_status=$?
+        fi
+
+        if [ -x "$tests_hook" ]; then
+            "$tests_hook" "$@"
+        fi
+
+        exit "$original_status"
+        """
+    }
+
+    private static func shellQuotedPath(_ path: String) -> String {
+        "'\(path.replacingOccurrences(of: "'", with: "'\\''"))'"
     }
 
     private static func runGitCommand(_ arguments: [String], in repositoryURL: URL) -> (success: Bool, output: String) {
