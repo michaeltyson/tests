@@ -13,20 +13,25 @@ private enum TestHistorySidebarTab: String, CaseIterable {
     case graph = "Graph"
 }
 
+private enum TestHistoryDefaults {
+    static let selectedSidebarTabKey = "TestHistorySelectedSidebarTab"
+    static let sidebarWidthKey = "TestHistorySidebarWidth"
+    static let defaultSidebarWidth: CGFloat = 280
+    static let minimumSidebarWidth: CGFloat = 250
+    static let maximumSidebarWidth: CGFloat = 600
+}
+
 struct TestHistoryView: View {
     @ObservedObject var testResultStore: TestResultStore
     @ObservedObject var testRunner: TestRunner
     @State private var selectedTestRun: TestRun?
     @State private var selectedCommit: GitCommitNode?
-    @AppStorage("TestHistorySelectedSidebarTab") private var selectedSidebarTabRawValue = TestHistorySidebarTab.runs.rawValue
+    @AppStorage(TestHistoryDefaults.selectedSidebarTabKey) private var selectedSidebarTabRawValue = TestHistorySidebarTab.runs.rawValue
+    @AppStorage(TestHistoryDefaults.sidebarWidthKey) private var persistedSidebarWidth = Double(TestHistoryDefaults.defaultSidebarWidth)
     @State private var runningPlaceholderTestRun: TestRun?
     @State private var runTestsInModifierActive = false
     @State private var localModifierMonitor: Any?
     @State private var globalModifierMonitor: Any?
-    @State private var sidebarWidth: CGFloat = {
-        let saved = UserDefaults.standard.double(forKey: "TestHistorySidebarWidth")
-        return saved > 0 ? saved : 280
-    }()
     
     private var sidebarTestRuns: [TestRun] {
         var runs = testResultStore.testRuns
@@ -51,21 +56,41 @@ struct TestHistoryView: View {
             set: { selectedSidebarTabRawValue = $0.rawValue }
         )
     }
+
+    private var sidebarWidth: CGFloat {
+        let width = CGFloat(persistedSidebarWidth)
+        guard width > 0 else { return TestHistoryDefaults.defaultSidebarWidth }
+        return min(
+            max(width, TestHistoryDefaults.minimumSidebarWidth),
+            TestHistoryDefaults.maximumSidebarWidth
+        )
+    }
+
+    private var sidebarWidthBinding: Binding<CGFloat> {
+        Binding(
+            get: { sidebarWidth },
+            set: { newWidth in
+                persistedSidebarWidth = Double(Self.clampedSidebarWidth(newWidth))
+            }
+        )
+    }
     
     var body: some View {
         HSplitView {
             // List view with translucent background
             sidebar
-            .frame(minWidth: 250, maxWidth: 600)
+            .frame(
+                minWidth: TestHistoryDefaults.minimumSidebarWidth,
+                maxWidth: TestHistoryDefaults.maximumSidebarWidth
+            )
             .background(.thinMaterial)
             .background(GeometryReader { geometry in
                 Color.clear.preference(key: SidebarWidthPreferenceKey.self, value: geometry.size.width)
             })
             .onPreferenceChange(SidebarWidthPreferenceKey.self) { newWidth in
-                // Only update if the change is significant and within bounds
-                if abs(newWidth - sidebarWidth) > 1.0 && newWidth >= 250 && newWidth <= 600 {
-                    sidebarWidth = newWidth
-                    UserDefaults.standard.set(newWidth, forKey: "TestHistorySidebarWidth")
+                let clampedWidth = Self.clampedSidebarWidth(newWidth)
+                if abs(clampedWidth - sidebarWidth) > 1.0 {
+                    persistedSidebarWidth = Double(clampedWidth)
                 }
             }
             
@@ -188,18 +213,16 @@ struct TestHistoryView: View {
         }
         .frame(minWidth: 800, minHeight: 600)
         .ignoresSafeArea(.all, edges: .top)
-        .background(SplitViewDividerController(sidebarWidth: $sidebarWidth))
+        .background(SplitViewDividerController(sidebarWidth: sidebarWidthBinding))
         .onAppear {
             // Backup approach: set divider position when view appears
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
                 if let window = NSApp.windows.first(where: { $0.title == "Test Reports" }),
                    let contentView = window.contentView {
                     if let splitView = findNSSplitView(in: contentView) {
-                        let savedWidth = UserDefaults.standard.double(forKey: "TestHistorySidebarWidth")
-                        let width = savedWidth > 0 ? savedWidth : 280
                         let currentPosition = splitView.arrangedSubviews.first?.frame.width ?? 0
-                        if abs(currentPosition - width) > 1.0 {
-                            splitView.setPosition(width, ofDividerAt: 0)
+                        if abs(currentPosition - sidebarWidth) > 1.0 {
+                            splitView.setPosition(sidebarWidth, ofDividerAt: 0)
                         }
                     }
                 }
@@ -411,6 +434,13 @@ struct TestHistoryView: View {
         }
 
         runTestsInModifierActive = false
+    }
+
+    private static func clampedSidebarWidth(_ width: CGFloat) -> CGFloat {
+        min(
+            max(width, TestHistoryDefaults.minimumSidebarWidth),
+            TestHistoryDefaults.maximumSidebarWidth
+        )
     }
 }
 
@@ -698,9 +728,10 @@ struct SplitViewDividerController: NSViewRepresentable {
                                 guard let splitView = splitView else { return }
                                 if splitView.arrangedSubviews.count > 0 {
                                     let newWidth = splitView.arrangedSubviews[0].frame.width
-                                    if abs(newWidth - sidebarWidth.wrappedValue) > 1.0 && newWidth >= 250 && newWidth <= 600 {
+                                    if abs(newWidth - sidebarWidth.wrappedValue) > 1.0 &&
+                                        newWidth >= TestHistoryDefaults.minimumSidebarWidth &&
+                                        newWidth <= TestHistoryDefaults.maximumSidebarWidth {
                                         sidebarWidth.wrappedValue = newWidth
-                                        UserDefaults.standard.set(newWidth, forKey: "TestHistorySidebarWidth")
                                     }
                                 }
                             }
