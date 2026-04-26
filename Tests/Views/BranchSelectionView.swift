@@ -233,27 +233,7 @@ struct BranchSelectionView: View {
     }
 
     private func parseBranchSuggestions(from output: String, recentBranchOrder: [String: Int]) -> [RefSuggestion] {
-        var branches = output.components(separatedBy: .newlines)
-            .map { line in
-                var branch = line.trimmingCharacters(in: .whitespaces)
-                if branch.hasPrefix("* ") {
-                    branch = String(branch.dropFirst(2))
-                }
-                if branch.hasPrefix("+ ") {
-                    branch = String(branch.dropFirst(2))
-                }
-                if branch.hasPrefix("remotes/origin/") {
-                    branch = String(branch.dropFirst("remotes/origin/".count))
-                } else if branch.hasPrefix("remotes/") {
-                    branch = String(branch.dropFirst("remotes/".count))
-                }
-                return branch.trimmingCharacters(in: .whitespaces)
-            }
-            .filter { !$0.isEmpty }
-            .filter { !$0.hasPrefix("HEAD") }
-            .filter { !$0.contains("->") }
-
-        branches = Array(Set(branches)).sorted {
+        let branches = GitHistoryService.normalizedBranchNames(fromBranchList: output).sorted {
             switch (recentBranchOrder[$0], recentBranchOrder[$1]) {
             case let (lhs?, rhs?):
                 return lhs == rhs ? $0.localizedCaseInsensitiveCompare($1) == .orderedAscending : lhs < rhs

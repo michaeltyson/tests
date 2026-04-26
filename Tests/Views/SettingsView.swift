@@ -20,6 +20,7 @@ struct SettingsView: View {
     @State private var preBuildScript: String = ""
     @State private var workspaceOptions: [String] = []
     @State private var schemeOptions: [String] = []
+    @State private var branchOptions: [String] = []
     
     var body: some View {
         ScrollView {
@@ -63,8 +64,11 @@ struct SettingsView: View {
                         title: "Default Branch",
                         description: "Used for manual runs when you do not explicitly choose a branch."
                     ) {
-                        TextField("Branch name", text: $branchName)
-                            .textFieldStyle(.roundedBorder)
+                        EditableComboBox(
+                            placeholder: "Branch name",
+                            text: $branchName,
+                            options: branchOptions
+                        )
                     }
 
                     settingsCard(
@@ -127,9 +131,11 @@ struct SettingsView: View {
             parallelBuildJobCount = settings.parallelBuildJobCount
             preBuildScript = settings.preBuildScript
             inferProjectSettingsIfPossible()
+            refreshBranchOptions()
         }
         .onChange(of: repositoryPath) { _, _ in
             inferProjectSettingsIfPossible()
+            refreshBranchOptions()
         }
         .onChange(of: workspaceName) { _, _ in
             refreshSchemeOptions()
@@ -187,6 +193,24 @@ struct SettingsView: View {
             in: repositoryURL,
             preferredWorkspaceName: workspaceName
         )
+    }
+
+    private func refreshBranchOptions() {
+        let trimmedPath = repositoryPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedPath.isEmpty else {
+            branchOptions = []
+            return
+        }
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            let repositoryURL = URL(fileURLWithPath: trimmedPath, isDirectory: true)
+            let options = GitBranchFinder.findBranchNames(in: repositoryURL)
+
+            DispatchQueue.main.async {
+                guard repositoryPath.trimmingCharacters(in: .whitespacesAndNewlines) == trimmedPath else { return }
+                branchOptions = options
+            }
+        }
     }
 
     private func shouldReplaceInferredSchemeName(_ schemeName: String, with inferredSchemeName: String) -> Bool {

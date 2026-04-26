@@ -185,6 +185,21 @@ final class GitHistoryService {
             .filter { seen.insert($0).inserted }
     }
 
+    static func normalizedBranchNames(fromBranchList output: String) -> [String] {
+        var seen = Set<String>()
+        return output
+            .components(separatedBy: .newlines)
+            .compactMap { normalizedBranchName($0) }
+            .filter { !$0.hasPrefix("HEAD") }
+            .filter { !$0.contains("->") }
+            .filter { seen.insert($0).inserted }
+            .sorted {
+                $0.count == $1.count
+                    ? $0.localizedCaseInsensitiveCompare($1) == .orderedAscending
+                    : $0.count < $1.count
+            }
+    }
+
     static func relevantBranchNames(
         testRuns: [TestRun],
         currentTestRun: TestRun?,
@@ -367,6 +382,9 @@ final class GitHistoryService {
         if branchName.hasPrefix("+") {
             branchName = String(branchName.dropFirst()).trimmingCharacters(in: .whitespacesAndNewlines)
         }
+        if branchName.hasPrefix("*") {
+            branchName = String(branchName.dropFirst()).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
         if branchName.hasPrefix("origin/") {
             branchName = String(branchName.dropFirst("origin/".count))
         } else if branchName.hasPrefix("remotes/origin/") {
@@ -375,5 +393,37 @@ final class GitHistoryService {
             branchName = String(branchName.dropFirst("source-origin/".count))
         }
         return branchName.isEmpty ? nil : branchName
+    }
+}
+
+enum GitBranchFinder {
+    static func findBranchNames(in repositoryURL: URL) -> [String] {
+        let result = runGitCommand(["branch", "-a"], in: repositoryURL)
+        guard result.success else { return [] }
+        return GitHistoryService.normalizedBranchNames(fromBranchList: result.output)
+    }
+
+    private static func runGitCommand(_ arguments: [String], in repositoryURL: URL) -> (success: Bool, output: String) {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        process.arguments = arguments
+        process.currentDirectoryURL = repositoryURL
+        var environment = ProcessInfo.processInfo.environment
+        environment["GIT_OPTIONAL_LOCKS"] = "0"
+        process.environment = environment
+
+        let outputPipe = Pipe()
+        process.standardOutput = outputPipe
+        process.standardError = outputPipe
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+            let data = outputPipe.fileHandleForReading.readDataToEndOfFile()
+            let output = String(data: data, encoding: .utf8) ?? ""
+            return (process.terminationStatus == 0, output)
+        } catch {
+            return (false, error.localizedDescription)
+        }
     }
 }

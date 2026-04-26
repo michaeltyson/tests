@@ -29,6 +29,22 @@ final class GitHistoryServiceTests: XCTestCase {
         )
     }
 
+    func testNormalizedBranchNamesFromBranchListDeduplicatesLocalAndRemoteBranches() {
+        let output = """
+          feature/login
+        * main
+          remotes/origin/codex/very-specific-working-branch
+          remotes/origin/HEAD -> origin/main
+          remotes/origin/feature/login
+          remotes/origin/release/1.0
+        """
+
+        XCTAssertEqual(
+            GitHistoryService.normalizedBranchNames(fromBranchList: output),
+            ["main", "release/1.0", "feature/login", "codex/very-specific-working-branch"]
+        )
+    }
+
     func testRelevantBranchNamesUseTestedBranchesBeforeFallback() {
         var run = TestRun(status: .success)
         run.branchName = "origin/develop"
