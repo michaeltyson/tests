@@ -133,7 +133,7 @@ private struct TestGraphCommitRow: View {
     @State private var isHovered = false
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 3) {
             CommitGraphGlyphView(
                 status: commit.testStatus,
                 laneIndex: commit.laneIndex,
@@ -194,7 +194,7 @@ private struct TestGraphCommitRow: View {
         .background(rowBackground)
         .overlay(alignment: .bottom) {
             Divider()
-                .padding(.leading, graphWidth + 4)
+                .padding(.leading, graphWidth + 3)
         }
         .onHover { hovering in
             isHovered = hovering
@@ -218,7 +218,19 @@ private struct TestGraphCommitRow: View {
             .union(commit.topConnections.flatMap { [$0.fromLane, $0.toLane] })
             .union(commit.bottomConnections.flatMap { [$0.fromLane, $0.toLane] })
         let rightmostLane = visibleLanes.max() ?? commit.laneIndex
-        return CGFloat(rightmostLane) * 14 + 22
+        return GitGraphLayout.xPosition(for: rightmostLane) + GitGraphLayout.trailingPadding
+    }
+}
+
+private enum GitGraphLayout {
+    static let laneSpacing: CGFloat = 11
+    static let nodeDiameter: CGFloat = 13
+    static let lineWidth: CGFloat = 2
+    static let leadingPadding: CGFloat = 8
+    static let trailingPadding: CGFloat = 9
+
+    static func xPosition(for lane: Int) -> CGFloat {
+        CGFloat(lane) * laneSpacing + leadingPadding
     }
 }
 
@@ -231,9 +243,8 @@ struct CommitGraphGlyphView: View {
     let topConnections: [GitGraphLaneConnection]
     let bottomConnections: [GitGraphLaneConnection]
 
-    private let laneSpacing: CGFloat = 14
-    private let nodeDiameter: CGFloat = 16
-    private let lineWidth: CGFloat = 2
+    private let nodeDiameter = GitGraphLayout.nodeDiameter
+    private let lineWidth = GitGraphLayout.lineWidth
 
     var body: some View {
         ZStack {
@@ -293,7 +304,7 @@ struct CommitGraphGlyphView: View {
             }
 
             statusNode
-                .position(x: xPosition(for: laneIndex), y: 17)
+                .position(x: xPosition(for: laneIndex), y: 18)
         }
     }
 
@@ -333,7 +344,7 @@ struct CommitGraphGlyphView: View {
     }
 
     private func xPosition(for lane: Int) -> CGFloat {
-        CGFloat(lane) * laneSpacing + 10
+        GitGraphLayout.xPosition(for: lane)
     }
 
     private func laneColor(_ lane: Int) -> Color {

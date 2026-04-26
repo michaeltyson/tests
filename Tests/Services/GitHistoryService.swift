@@ -29,18 +29,6 @@ final class GitHistoryService {
             return LoadResult(commits: [], errorMessage: "Set a repository path in Settings to load commit history.")
         }
 
-        let relevantRefs = relevantHistoryRefs(
-            repositoryPath: trimmedPath,
-            testRuns: testRuns,
-            currentTestRun: currentTestRun,
-            fallbackBranchName: fallbackBranchName
-        )
-        let testedBranchNames = Self.relevantBranchNames(
-            testRuns: testRuns,
-            currentTestRun: currentTestRun,
-            fallbackBranchName: fallbackBranchName
-        )
-
         var arguments = [
             "log",
             "--first-parent",
@@ -49,12 +37,7 @@ final class GitHistoryService {
             "-n",
             "\(maximumCommitCount)"
         ]
-
-        if relevantRefs.isEmpty {
-            arguments += ["--max-count", "\(min(maximumCommitCount, 150))", "--branches", "--remotes=origin"]
-        } else {
-            arguments += relevantRefs
-        }
+        arguments += ["--branches", "--remotes=origin"]
 
         let result = runGitCommand(
             arguments,
@@ -71,8 +54,7 @@ final class GitHistoryService {
         let runsByCommit = Self.latestTestRunsByCommitSHA(testRuns: testRuns, currentTestRun: currentTestRun)
         let nodes = Self.makeCommitNodes(
             from: parsedCommits,
-            testRunsByCommitSHA: runsByCommit,
-            visibleBranchNames: relevantRefs.isEmpty ? nil : testedBranchNames
+            testRunsByCommitSHA: runsByCommit
         )
         return LoadResult(commits: nodes, errorMessage: nil)
     }
