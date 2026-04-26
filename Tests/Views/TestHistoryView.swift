@@ -391,7 +391,7 @@ struct TestHistoryView: View {
     }
 
     private func runTests(for commit: GitCommitNode) {
-        testRunner.runTests(branchName: commit.sha, isManualRun: true)
+        testRunner.runTests(branchName: commit.branchNames.first ?? commit.sha, isManualRun: true)
     }
 
     private func updateRunTestsModifierState(with modifierFlags: NSEvent.ModifierFlags? = nil) {
