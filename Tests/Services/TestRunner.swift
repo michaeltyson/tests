@@ -115,7 +115,7 @@ class TestRunner: ObservableObject {
             return
         }
 
-        // Determine which branch to use: notification branch > settings branch > "develop".
+        // Determine which branch to use: notification branch > settings branch > "main".
         let branchToUse = resolvedBranchName(for: branchName, defaultBranch: settings.branchName)
 
         switch dispatchIncomingRun(branchName: branchToUse, isManualRun: isManualRun) {
@@ -1295,7 +1295,7 @@ class TestRunner: ObservableObject {
     }
 
     private func resolvedBranchName(for requestedBranch: String?, defaultBranch: String?) -> String {
-        var branchToUse = requestedBranch ?? defaultBranch ?? "develop"
+        var branchToUse = requestedBranch ?? defaultBranch ?? "main"
         branchToUse = branchToUse.trimmingCharacters(in: .whitespaces)
         if branchToUse.hasPrefix("+") {
             branchToUse = String(branchToUse.dropFirst()).trimmingCharacters(in: .whitespaces)
