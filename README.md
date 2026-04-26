@@ -55,7 +55,9 @@ Configure:
 
 ### Post-Commit Hook
 
-To trigger tests automatically after commits, use the bundled post-commit hook:
+To trigger tests automatically after commits, open Settings and use **Install Post-Hook Script** under the repository path. This symlinks the bundled hook into the repository's Git hooks folder.
+
+You can also install the hook manually:
 
 ```bash
 ln -s /path/to/Tests.app/Contents/Resources/post-commit /path/to/repo/.git/hooks/post-commit
