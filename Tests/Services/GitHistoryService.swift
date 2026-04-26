@@ -11,6 +11,11 @@ final class GitHistoryService {
         let errorMessage: String?
     }
 
+    private struct GitReference {
+        let sha: String
+        let name: String
+    }
+
     private let gitPath = "/usr/bin/git"
     private let maximumCommitCount: Int
 
@@ -37,7 +42,14 @@ final class GitHistoryService {
             "-n",
             "\(maximumCommitCount)"
         ]
-        let refs = Self.canonicalHistoryRefs(from: gitReferenceNames(repositoryPath: trimmedPath))
+        let availableReferences = gitReferences(repositoryPath: trimmedPath)
+        let refs = Self.canonicalHistoryRefs(from: Set(availableReferences.map(\.name)))
+        let canonicalBranchHeads = Self.canonicalBranchHeads(
+            from: Dictionary(
+                uniqueKeysWithValues: availableReferences.map { ($0.name, $0.sha) }
+            )
+        )
+        let branchHeadsByName = canonicalBranchHeads.isEmpty ? nil : canonicalBranchHeads
         if refs.isEmpty {
             arguments += ["--branches", "--remotes=origin"]
         } else {
@@ -59,7 +71,8 @@ final class GitHistoryService {
         let runsByCommit = Self.latestTestRunsByCommitSHA(testRuns: testRuns, currentTestRun: currentTestRun)
         let nodes = Self.makeCommitNodes(
             from: parsedCommits,
-            testRunsByCommitSHA: runsByCommit
+            testRunsByCommitSHA: runsByCommit,
+            branchHeadsByName: branchHeadsByName
         )
         return LoadResult(commits: nodes, errorMessage: nil)
     }
@@ -280,6 +293,31 @@ final class GitHistoryService {
             .map(\.value)
     }
 
+    static func canonicalBranchHeads(from referencesByName: [String: String]) -> [String: String] {
+        var headsByBranchName: [String: String] = [:]
+
+        for (ref, sha) in referencesByName where ref.hasPrefix("refs/heads/") {
+            let branchName = String(ref.dropFirst("refs/heads/".count))
+            headsByBranchName[branchName] = sha
+        }
+
+        for (ref, sha) in referencesByName where ref.hasPrefix("refs/remotes/origin/") && !ref.hasSuffix("/HEAD") {
+            let branchName = String(ref.dropFirst("refs/remotes/origin/".count))
+            if headsByBranchName[branchName] == nil {
+                headsByBranchName[branchName] = sha
+            }
+        }
+
+        for (ref, sha) in referencesByName where ref.hasPrefix("refs/remotes/source-origin/") && !ref.hasSuffix("/HEAD") {
+            let branchName = String(ref.dropFirst("refs/remotes/source-origin/".count))
+            if headsByBranchName[branchName] == nil {
+                headsByBranchName[branchName] = sha
+            }
+        }
+
+        return headsByBranchName
+    }
+
     static func latestTestRunsByCommitSHA(testRuns: [TestRun], currentTestRun: TestRun?) -> [String: TestRun] {
         var runs = testRuns
         if let currentTestRun {
@@ -300,7 +338,8 @@ final class GitHistoryService {
     static func makeCommitNodes(
         from commits: [GitLogCommit],
         testRunsByCommitSHA: [String: TestRun],
-        visibleBranchNames: Set<String>? = nil
+        visibleBranchNames: Set<String>? = nil,
+        branchHeadsByName: [String: String]? = nil
     ) -> [GitCommitNode] {
         let sortedCommits = commits.sorted { lhs, rhs in
             switch (lhs.authorDate, rhs.authorDate) {
@@ -363,15 +402,20 @@ final class GitHistoryService {
             let laneCount = max(incomingLanes.count, outgoingLanes.count, laneIndex + 1)
             activeLanes = nextLanes
 
+            let normalizedCommitSHA = normalizedSHA(commit.sha) ?? commit.sha
+            let branchNames = normalizedBranchNames(from: commit.decorations).filter { branchName in
+                guard visibleBranchNames?.contains(branchName) ?? true else { return false }
+                guard let branchHeadsByName else { return true }
+                return normalizedSHA(branchHeadsByName[branchName]) == normalizedCommitSHA
+            }
+
             return GitCommitNode(
                 sha: commit.sha,
                 shortSHA: commit.shortSHA,
                 subject: commit.subject,
                 authorDate: commit.authorDate,
                 parentSHAs: commit.parentSHAs,
-                branchNames: normalizedBranchNames(from: commit.decorations).filter { branchName in
-                    visibleBranchNames?.contains(branchName) ?? true
-                },
+                branchNames: branchNames,
                 laneIndex: laneIndex,
                 laneCount: laneCount,
                 topLanes: incomingLanes,
@@ -418,18 +462,20 @@ final class GitHistoryService {
     }
 
     private func gitReferenceNames(repositoryPath: String) -> Set<String> {
+        Set(gitReferences(repositoryPath: repositoryPath).map(\.name))
+    }
+
+    private func gitReferences(repositoryPath: String) -> [GitReference] {
         let result = runGitCommand(["show-ref"], repositoryPath: repositoryPath)
         guard result.success else { return [] }
 
-        return Set(
-            result.output
-                .components(separatedBy: .newlines)
-                .compactMap { line in
-                    let fields = line.split(separator: " ", maxSplits: 1)
-                    guard fields.count == 2 else { return nil }
-                    return String(fields[1])
-                }
-        )
+        return result.output
+            .components(separatedBy: .newlines)
+            .compactMap { line in
+                let fields = line.split(separator: " ", maxSplits: 1)
+                guard fields.count == 2 else { return nil }
+                return GitReference(sha: String(fields[0]), name: String(fields[1]))
+            }
     }
 
     private static func normalizedBranchName(_ branchName: String?) -> String? {

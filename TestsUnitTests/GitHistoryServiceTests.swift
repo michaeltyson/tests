@@ -124,6 +124,23 @@ final class GitHistoryServiceTests: XCTestCase {
         )
     }
 
+    func testCanonicalBranchHeadsDeduplicatesLocalAndRemoteBranches() {
+        let refsByName = [
+            "refs/heads/release/2.1": "local-head",
+            "refs/remotes/origin/release/2.1": "remote-head",
+            "refs/remotes/source-origin/develop": "source-head",
+            "refs/remotes/origin/HEAD": "ignored"
+        ]
+
+        XCTAssertEqual(
+            GitHistoryService.canonicalBranchHeads(from: refsByName),
+            [
+                "release/2.1": "local-head",
+                "develop": "source-head"
+            ]
+        )
+    }
+
     func testLatestTestRunsByCommitSHAPrefersNewestRun() {
         var older = TestRun(
             id: UUID(),
@@ -242,6 +259,36 @@ final class GitHistoryServiceTests: XCTestCase {
         )
 
         XCTAssertEqual(nodes[0].branchNames, ["main"])
+    }
+
+    func testMakeCommitNodesOnlyShowsBranchBadgesAtCanonicalHeads() {
+        let commits = [
+            GitLogCommit(
+                sha: "newer",
+                shortSHA: "newer",
+                authorDate: Date(timeIntervalSince1970: 2),
+                decorations: "origin/release/2.1",
+                parentSHAs: ["older"],
+                subject: "Current remote head"
+            ),
+            GitLogCommit(
+                sha: "older",
+                shortSHA: "older",
+                authorDate: Date(timeIntervalSince1970: 1),
+                decorations: "release/2.1",
+                parentSHAs: [],
+                subject: "Stale local head"
+            )
+        ]
+
+        let nodes = GitHistoryService.makeCommitNodes(
+            from: commits,
+            testRunsByCommitSHA: [:],
+            branchHeadsByName: ["release/2.1": "newer"]
+        )
+
+        XCTAssertEqual(nodes[0].branchNames, ["release/2.1"])
+        XCTAssertEqual(nodes[1].branchNames, [])
     }
 
     func testMakeCommitNodesSortsNewestCommitsFirst() {
