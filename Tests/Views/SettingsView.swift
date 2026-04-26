@@ -101,7 +101,25 @@ struct SettingsView: View {
                     }
                 }
 
-                DisclosureGroup("Advanced Build Options", isExpanded: $advancedExpanded) {
+                VStack(alignment: .leading, spacing: 0) {
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.16)) {
+                            advancedExpanded.toggle()
+                        }
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 11, weight: .semibold))
+                                .rotationEffect(.degrees(advancedExpanded ? 90 : 0))
+                            Text("Advanced Build Options")
+                                .font(.system(size: 15, weight: .semibold))
+                            Spacer()
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+
+                    if advancedExpanded {
                     VStack(alignment: .leading, spacing: 16) {
                         advancedTextFieldRow(
                             title: "Pre-Build Script",
@@ -125,7 +143,8 @@ struct SettingsView: View {
 
                         advancedControlRow(
                             title: "Build Jobs",
-                            description: "Maximum number of concurrent build jobs passed to xcodebuild."
+                            description: "Maximum number of concurrent build jobs passed to xcodebuild.",
+                            isEnabled: parallelTestingEnabled
                         ) {
                             Stepper(
                                 value: $parallelBuildJobCount,
@@ -139,6 +158,7 @@ struct SettingsView: View {
                         }
                     }
                     .padding(.top, 14)
+                    }
                 }
                 .padding(18)
                 .background(
@@ -448,13 +468,17 @@ struct SettingsView: View {
     private func advancedControlRow<Control: View>(
         title: String,
         description: String,
+        isEnabled: Bool = true,
         @ViewBuilder control: () -> Control
     ) -> some View {
         HStack(alignment: .center, spacing: 18) {
             settingsRowLabel(title: title, description: description)
+                .opacity(isEnabled ? 1 : 0.45)
             Spacer(minLength: 16)
             control()
                 .controlSize(.regular)
+                .disabled(!isEnabled)
+                .opacity(isEnabled ? 1 : 0.45)
         }
     }
 

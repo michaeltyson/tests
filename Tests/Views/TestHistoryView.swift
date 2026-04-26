@@ -280,15 +280,13 @@ struct TestHistoryView: View {
 
     private var sidebar: some View {
         VStack(spacing: 0) {
-            Picker("", selection: selectedSidebarTabBinding) {
-                ForEach(TestHistorySidebarTab.allCases, id: \.self) { tab in
-                    Text(tab.rawValue).tag(tab)
-                }
+            HStack(alignment: .center) {
+                TestHistorySidebarTabBar(selection: selectedSidebarTabBinding)
+                Spacer(minLength: 12)
             }
-            .pickerStyle(.segmented)
-            .padding(.horizontal, 12)
+            .padding(.horizontal, 18)
             .padding(.top, 12)
-            .padding(.bottom, 8)
+            .padding(.bottom, 10)
 
             Divider()
 
@@ -438,6 +436,84 @@ struct TestHistoryView: View {
             max(width, TestHistoryDefaults.minimumSidebarWidth),
             TestHistoryDefaults.maximumSidebarWidth
         )
+    }
+}
+
+private struct TestHistorySidebarTabBar: View {
+    @Binding var selection: TestHistorySidebarTab
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(TestHistorySidebarTab.allCases, id: \.self) { tab in
+                TestHistorySidebarTabButton(
+                    title: tab.rawValue,
+                    isSelected: selection == tab
+                ) {
+                    selection = tab
+                }
+            }
+        }
+        .padding(3)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.primary.opacity(0.06))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5)
+        )
+    }
+}
+
+private struct TestHistorySidebarTabButton: View {
+    let title: String
+    let isSelected: Bool
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(foregroundColor)
+                .frame(minWidth: 58)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .background(background)
+                .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            isHovered = hovering
+        }
+        .animation(.easeOut(duration: 0.12), value: isHovered)
+        .animation(.easeOut(duration: 0.12), value: isSelected)
+    }
+
+    private var foregroundColor: Color {
+        if isSelected {
+            return .primary
+        }
+        return isHovered ? .primary : .secondary
+    }
+
+    @ViewBuilder
+    private var background: some View {
+        if isSelected {
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(Color.accentColor.opacity(0.18))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .strokeBorder(Color.accentColor.opacity(0.26), lineWidth: 0.5)
+                )
+        } else if isHovered {
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(Color.primary.opacity(0.06))
+        } else {
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(Color.clear)
+        }
     }
 }
 
