@@ -2,7 +2,7 @@
 
 Tests is a macOS menu bar app for keeping an eye on an Xcode test suite while you work on iOS and macOS apps. It was built as a local alternative to putting a project on GitHub just to use Apple's CI system: it runs on your Mac, stays visible in your workspace, and does not require any cloud services.
 
-![Tests reports window](Screenshot.jpg)
+![Tests reports window](docs/screenshot.jpg)
 
 It watches a Git repository, runs tests in a disposable workspace, notifies you when a run fails, and gives you a compact reports window for recent runs and branch history. It is built for the workflow where commits are frequent, test runs take long enough to be annoying, and you want the result right there without babysitting Terminal or shipping your code somewhere else.
 
