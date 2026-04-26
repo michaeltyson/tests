@@ -103,6 +103,27 @@ final class GitHistoryServiceTests: XCTestCase {
         )
     }
 
+    func testCanonicalHistoryRefsDeduplicatesLocalAndOriginBranches() {
+        let refs: Set<String> = [
+            "refs/heads/main",
+            "refs/remotes/origin/main",
+            "refs/heads/codex/retry",
+            "refs/remotes/origin/codex/retry",
+            "refs/remotes/origin/release/2.1",
+            "refs/remotes/origin/HEAD",
+            "refs/tags/v1"
+        ]
+
+        XCTAssertEqual(
+            GitHistoryService.canonicalHistoryRefs(from: refs),
+            [
+                "refs/heads/codex/retry",
+                "refs/heads/main",
+                "refs/remotes/origin/release/2.1"
+            ]
+        )
+    }
+
     func testLatestTestRunsByCommitSHAPrefersNewestRun() {
         var older = TestRun(
             id: UUID(),

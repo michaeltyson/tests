@@ -37,7 +37,12 @@ final class GitHistoryService {
             "-n",
             "\(maximumCommitCount)"
         ]
-        arguments += ["--branches", "--remotes=origin"]
+        let refs = Self.canonicalHistoryRefs(from: gitReferenceNames(repositoryPath: trimmedPath))
+        if refs.isEmpty {
+            arguments += ["--branches", "--remotes=origin"]
+        } else {
+            arguments += refs
+        }
 
         let result = runGitCommand(
             arguments,
@@ -244,6 +249,35 @@ final class GitHistoryService {
         }
 
         return branchNames
+    }
+
+    static func canonicalHistoryRefs(from referenceNames: Set<String>) -> [String] {
+        var refsByBranchName: [String: String] = [:]
+
+        for ref in referenceNames {
+            if ref.hasPrefix("refs/heads/") {
+                let branchName = String(ref.dropFirst("refs/heads/".count))
+                refsByBranchName[branchName] = ref
+            }
+        }
+
+        for ref in referenceNames {
+            guard ref.hasPrefix("refs/remotes/origin/"),
+                  !ref.hasSuffix("/HEAD") else {
+                continue
+            }
+
+            let branchName = String(ref.dropFirst("refs/remotes/origin/".count))
+            if refsByBranchName[branchName] == nil {
+                refsByBranchName[branchName] = ref
+            }
+        }
+
+        return refsByBranchName
+            .sorted { lhs, rhs in
+                lhs.key.localizedCaseInsensitiveCompare(rhs.key) == .orderedAscending
+            }
+            .map(\.value)
     }
 
     static func latestTestRunsByCommitSHA(testRuns: [TestRun], currentTestRun: TestRun?) -> [String: TestRun] {
