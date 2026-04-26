@@ -20,6 +20,10 @@ It watches a Git repository, runs tests in a disposable workspace, notifies you 
 - Supports a pre-build script, parallel testing, build job limits, and branch prefixes to ignore for automatic runs
 - Installs, wraps, and uninstalls Git post-commit hooks from Settings
 
+## Privacy
+
+Tests runs locally on your Mac. It does not send your source code, test output, branch names, commits, settings, or usage data to any cloud service.
+
 ## How It Works
 
 Tests is split into two pieces:
@@ -108,6 +112,13 @@ The app currently targets one configured repository at a time. The setup flow an
 - `TestsUnitTests/` - unit tests for branch detection, hook installation, graph modeling, and runner behavior
 - `project.yml` - XcodeGen project definition
 
-## Status
+## Known Limitations
 
-Tests is a small, focused tool built around an Xcode + Git workflow. It is ready to try locally, but expect rough edges around projects with unusual workspace layouts, complex hook setups, or multiple repositories.
+- Tests is designed for one configured repository at a time.
+- It assumes an Xcode project or workspace stored in a Git repository.
+- Projects with unusual workspace layouts, generated projects, or complex Git hook setups may need manual settings tweaks.
+- The Git hook integration only runs while the app is installed and able to receive the trigger.
+
+## License
+
+Tests is released under the MIT License. See [LICENSE](LICENSE).
