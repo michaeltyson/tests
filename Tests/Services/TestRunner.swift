@@ -966,15 +966,7 @@ class TestRunner: ObservableObject {
         /usr/bin/xcodebuild -workspace \(escapedWorkspacePath) -scheme \(escapedScheme) -destination \(escapedDestination) -derivedDataPath \(escapedDerivedDataPath)\(optionalPerformanceArguments)\(optionalParallelBuildArguments)\(optionalParallelArguments) build-for-testing && /usr/bin/xcodebuild -workspace \(escapedWorkspacePath) -scheme \(escapedScheme) -destination \(escapedDestination) -derivedDataPath \(escapedDerivedDataPath)\(optionalPerformanceArguments)\(optionalParallelArguments) test-without-building
         """
         
-        // Check if xcbeautify is available
-        let xcbeautifyPaths = ["/usr/local/bin/xcbeautify", "/opt/homebrew/bin/xcbeautify"]
-        var xcbeautifyPath: String?
-        for path in xcbeautifyPaths {
-            if fileManager.fileExists(atPath: path) {
-                xcbeautifyPath = path
-                break
-            }
-        }
+        let xcbeautifyPath = Self.xcbeautifyExecutablePath(fileManager: fileManager)
         
         // Run build and test in a fail-fast shell pipeline:
         // test-without-building only runs if build-for-testing succeeds.
@@ -2109,6 +2101,33 @@ class TestRunner: ObservableObject {
             "--renderer", "terminal",
             "--preserve-unbeautified"
         ]
+    }
+
+    static func xcbeautifyExecutablePath(fileManager: FileManager = .default, bundle: Bundle = .main) -> String? {
+        xcbeautifyExecutablePath(
+            bundledPath: bundle.url(forAuxiliaryExecutable: "xcbeautify")?.path,
+            homebrewPaths: [
+                "/usr/local/bin/xcbeautify",
+                "/opt/homebrew/bin/xcbeautify"
+            ],
+            isExecutable: fileManager.isExecutableFile(atPath:)
+        )
+    }
+
+    static func xcbeautifyExecutablePath(
+        bundledPath: String?,
+        homebrewPaths: [String],
+        isExecutable: (String) -> Bool
+    ) -> String? {
+        var candidatePaths = [String]()
+
+        if let bundledPath {
+            candidatePaths.append(bundledPath)
+        }
+
+        candidatePaths.append(contentsOf: homebrewPaths)
+
+        return candidatePaths.first(where: isExecutable)
     }
 
     static func xcodebuildTestInactivityTimeoutInterval() -> TimeInterval {

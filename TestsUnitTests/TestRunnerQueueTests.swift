@@ -26,6 +26,28 @@ final class TestRunnerQueueTests: XCTestCase {
         )
     }
 
+    func testBundledXcbeautifyPathIsPreferredOverHomebrew() {
+        XCTAssertEqual(
+            TestRunner.xcbeautifyExecutablePath(
+                bundledPath: "/app/xcbeautify",
+                homebrewPaths: ["/opt/homebrew/bin/xcbeautify"],
+                isExecutable: { $0 == "/app/xcbeautify" || $0 == "/opt/homebrew/bin/xcbeautify" }
+            ),
+            "/app/xcbeautify"
+        )
+    }
+
+    func testXcbeautifyPathFallsBackToHomebrew() {
+        XCTAssertEqual(
+            TestRunner.xcbeautifyExecutablePath(
+                bundledPath: "/app/xcbeautify",
+                homebrewPaths: ["/opt/homebrew/bin/xcbeautify"],
+                isExecutable: { $0 == "/opt/homebrew/bin/xcbeautify" }
+            ),
+            "/opt/homebrew/bin/xcbeautify"
+        )
+    }
+
     func testParallelTestingArgumentsIncludedWhenEnabled() {
         XCTAssertEqual(
             TestRunner.xcodebuildParallelTestingArguments(enabled: true),

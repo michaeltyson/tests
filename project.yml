@@ -26,6 +26,7 @@ targets:
       - path: Tests
         excludes:
           - "**/Preview Content/**"
+          - "Resources/ThirdPartyLicenses/**"
     settings:
       PRODUCT_BUNDLE_IDENTIFIER: com.atastypixel.Tests
       INFOPLIST_KEY_LSUIElement: YES
@@ -70,6 +71,42 @@ targets:
           - "${SRCROOT}/Tests/Resources/post-commit"
         outputFiles:
           - "${BUILT_PRODUCTS_DIR}/Tests.app/Contents/Resources/post-commit"
+      - name: Copy Third-Party License Notices
+        script: |
+          if [ -d "${BUILT_PRODUCTS_DIR}/Tests.app" ] && [ -d "${SRCROOT}/Tests/Resources/ThirdPartyLicenses" ]; then
+            mkdir -p "${BUILT_PRODUCTS_DIR}/Tests.app/Contents/Resources/ThirdPartyLicenses"
+            cp "${SRCROOT}/Tests/Resources/ThirdPartyLicenses/"*.txt "${BUILT_PRODUCTS_DIR}/Tests.app/Contents/Resources/ThirdPartyLicenses/"
+          fi
+        inputFiles:
+          - "${SRCROOT}/Tests/Resources/ThirdPartyLicenses/xcbeautify-LICENSE.txt"
+          - "${SRCROOT}/Tests/Resources/ThirdPartyLicenses/XMLCoder-LICENSE.txt"
+          - "${SRCROOT}/Tests/Resources/ThirdPartyLicenses/swift-argument-parser-LICENSE.txt"
+        outputFiles:
+          - "${BUILT_PRODUCTS_DIR}/Tests.app/Contents/Resources/ThirdPartyLicenses/xcbeautify-LICENSE.txt"
+          - "${BUILT_PRODUCTS_DIR}/Tests.app/Contents/Resources/ThirdPartyLicenses/XMLCoder-LICENSE.txt"
+          - "${BUILT_PRODUCTS_DIR}/Tests.app/Contents/Resources/ThirdPartyLicenses/swift-argument-parser-LICENSE.txt"
+      - name: Build and Copy xcbeautify
+        basedOnDependencyAnalysis: false
+        script: |
+          set -euo pipefail
+
+          XCBEAUTIFY_SOURCE="${SRCROOT}/Vendor/xcbeautify"
+          XCBEAUTIFY_SCRATCH="${DERIVED_FILE_DIR}/xcbeautify-build"
+          XCBEAUTIFY_OUTPUT="${BUILT_PRODUCTS_DIR}/Tests.app/Contents/MacOS/xcbeautify"
+
+          if [ -d "${BUILT_PRODUCTS_DIR}/Tests.app" ] && [ -f "${XCBEAUTIFY_SOURCE}/Package.swift" ]; then
+            xcrun swift build \
+              --package-path "${XCBEAUTIFY_SOURCE}" \
+              --configuration release \
+              --product xcbeautify \
+              --scratch-path "${XCBEAUTIFY_SCRATCH}"
+
+            mkdir -p "${BUILT_PRODUCTS_DIR}/Tests.app/Contents/MacOS"
+            cp "${XCBEAUTIFY_SCRATCH}/release/xcbeautify" "${XCBEAUTIFY_OUTPUT}"
+            chmod +x "${XCBEAUTIFY_OUTPUT}"
+          fi
+        outputFiles:
+          - "${BUILT_PRODUCTS_DIR}/Tests.app/Contents/MacOS/xcbeautify"
     postBuildScripts:
       - name: Clean up TestsCLI from Resources
         script: |

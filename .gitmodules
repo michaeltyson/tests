@@ -1,0 +1,3 @@
+[submodule "Vendor/xcbeautify"]
+	path = Vendor/xcbeautify
+	url = https://github.com/michaeltyson/xcbeautify

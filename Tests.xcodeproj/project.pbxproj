@@ -208,6 +208,8 @@
 				0E772B9496A289960E7BA575 /* Sources */,
 				C70419142D3BEF0BDA9A6A17 /* Copy CLI to App Bundle */,
 				8E64F235725961F0EA2D92C3 /* Copy post-commit hook to App Bundle */,
+				45C54B15FB1FDF27ABA8F55B /* Copy Third-Party License Notices */,
+				6E6612BE2638B5D6B17A1D51 /* Build and Copy xcbeautify */,
 				9CA7C03A3F5D26DBDB0092F3 /* Resources */,
 				69B0F1587E01577187D650FE /* Clean up TestsCLI from Resources */,
 			);
@@ -279,6 +281,30 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
+		45C54B15FB1FDF27ABA8F55B /* Copy Third-Party License Notices */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"${SRCROOT}/Tests/Resources/ThirdPartyLicenses/xcbeautify-LICENSE.txt",
+				"${SRCROOT}/Tests/Resources/ThirdPartyLicenses/XMLCoder-LICENSE.txt",
+				"${SRCROOT}/Tests/Resources/ThirdPartyLicenses/swift-argument-parser-LICENSE.txt",
+			);
+			name = "Copy Third-Party License Notices";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"${BUILT_PRODUCTS_DIR}/Tests.app/Contents/Resources/ThirdPartyLicenses/xcbeautify-LICENSE.txt",
+				"${BUILT_PRODUCTS_DIR}/Tests.app/Contents/Resources/ThirdPartyLicenses/XMLCoder-LICENSE.txt",
+				"${BUILT_PRODUCTS_DIR}/Tests.app/Contents/Resources/ThirdPartyLicenses/swift-argument-parser-LICENSE.txt",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "if [ -d \"${BUILT_PRODUCTS_DIR}/Tests.app\" ] && [ -d \"${SRCROOT}/Tests/Resources/ThirdPartyLicenses\" ]; then\n  mkdir -p \"${BUILT_PRODUCTS_DIR}/Tests.app/Contents/Resources/ThirdPartyLicenses\"\n  cp \"${SRCROOT}/Tests/Resources/ThirdPartyLicenses/\"*.txt \"${BUILT_PRODUCTS_DIR}/Tests.app/Contents/Resources/ThirdPartyLicenses/\"\nfi\n";
+		};
 		69B0F1587E01577187D650FE /* Clean up TestsCLI from Resources */ = {
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;
@@ -296,6 +322,26 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "# Remove TestsCLI from Resources (it should only be in MacOS)\nrm -f \"${BUILT_PRODUCTS_DIR}/Tests.app/Contents/Resources/TestsCLI\"\n";
+		};
+		6E6612BE2638B5D6B17A1D51 /* Build and Copy xcbeautify */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Build and Copy xcbeautify";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"${BUILT_PRODUCTS_DIR}/Tests.app/Contents/MacOS/xcbeautify",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -euo pipefail\n\nXCBEAUTIFY_SOURCE=\"${SRCROOT}/Vendor/xcbeautify\"\nXCBEAUTIFY_SCRATCH=\"${DERIVED_FILE_DIR}/xcbeautify-build\"\nXCBEAUTIFY_OUTPUT=\"${BUILT_PRODUCTS_DIR}/Tests.app/Contents/MacOS/xcbeautify\"\n\nif [ -d \"${BUILT_PRODUCTS_DIR}/Tests.app\" ] && [ -f \"${XCBEAUTIFY_SOURCE}/Package.swift\" ]; then\n  xcrun swift build \\\n    --package-path \"${XCBEAUTIFY_SOURCE}\" \\\n    --configuration release \\\n    --product xcbeautify \\\n    --scratch-path \"${XCBEAUTIFY_SCRATCH}\"\n\n  mkdir -p \"${BUILT_PRODUCTS_DIR}/Tests.app/Contents/MacOS\"\n  cp \"${XCBEAUTIFY_SCRATCH}/release/xcbeautify\" \"${XCBEAUTIFY_OUTPUT}\"\n  chmod +x \"${XCBEAUTIFY_OUTPUT}\"\nfi\n";
 		};
 		8E64F235725961F0EA2D92C3 /* Copy post-commit hook to App Bundle */ = {
 			isa = PBXShellScriptBuildPhase;

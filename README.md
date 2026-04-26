@@ -73,16 +73,16 @@ Launching the app again while it is already running brings the existing instance
 - macOS 15.0 or newer
 - Xcode 16.0 or newer
 - XcodeGen: `brew install xcodegen`
-- Optional: `xcbeautify` for nicer build output
 
 ### Build
 
 ```sh
+git submodule update --init --recursive
 xcodegen generate
 xcodebuild -project Tests.xcodeproj -scheme Tests -configuration Debug build
 ```
 
-The app target builds and bundles the CLI automatically.
+The app target builds and bundles the CLI and `xcbeautify` automatically.
 
 To run the unit tests:
 
