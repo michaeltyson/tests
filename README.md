@@ -94,6 +94,33 @@ To run the unit tests:
 xcodebuild test -project Tests.xcodeproj -scheme TestsUnitTests -destination 'platform=macOS,arch=arm64'
 ```
 
+### Create a Release DMG
+
+The release script builds a Release archive, signs the app with a Developer ID Application certificate, notarizes and staples the app, creates a signed DMG with `create-dmg`, then notarizes and staples the DMG:
+
+```sh
+xcrun notarytool store-credentials tests-release \
+  --apple-id you@example.com \
+  --team-id TEAMID1234 \
+  --password app-specific-password
+
+scripts/create-notarized-dmg.sh --notary-profile tests-release
+```
+
+The preferred path is to store an app-specific password in the keychain with `notarytool store-credentials`; the release script then reads it through the named profile. You can also pass notarization credentials through `APPLE_ID`, `APPLE_PASSWORD`, and `TEAM_ID` environment variables. The script infers `TEAM_ID` from your selected Developer ID Application certificate when it can.
+
+The script expects `create-dmg` to be installed:
+
+```sh
+brew install create-dmg
+```
+
+For a local packaging check without submitting to Apple:
+
+```sh
+scripts/create-notarized-dmg.sh --skip-notarization
+```
+
 ## Configuration Notes
 
 Settings are stored in `UserDefaults`. Test results and the disposable workspace live in Application Support:

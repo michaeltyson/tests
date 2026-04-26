@@ -42,6 +42,7 @@ targets:
       path: Tests/Info.plist
       properties:
         LSUIElement: true
+        LSApplicationCategoryType: public.app-category.developer-tools
     resources:
       - path: Tests/Assets.xcassets
       - path: Tests/Resources/post-commit
