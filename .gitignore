@@ -1,6 +1,6 @@
 .DerivedData/
 build/
+buildServer.json
 *.xcodeproj/xcuserdata/
 *.xcworkspace/xcuserdata/
 .DS_Store
-
