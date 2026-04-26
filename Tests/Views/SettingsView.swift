@@ -11,90 +11,128 @@ import AppKit
 struct SettingsView: View {
     @ObservedObject var settings = SettingsStore.shared
     @State private var repositoryPath: String = ""
+    @State private var workspaceName: String = ""
+    @State private var xcodeSchemeName: String = ""
     @State private var branchName: String = ""
     @State private var ignoredAutomaticBranchPrefixes: String = ""
     @State private var parallelTestingEnabled: Bool = true
+    @State private var parallelBuildJobCount: Int = 6
     @State private var preBuildScript: String = ""
+    @State private var workspaceOptions: [String] = []
+    @State private var schemeOptions: [String] = []
     
     var body: some View {
-        VStack(spacing: 18) {
-            header
+        ScrollView {
+            VStack(spacing: 18) {
+                header
 
-            settingsCard(
-                title: "Repository",
-                description: "Choose the Loopy Pro repository. The workspace is discovered automatically."
-            ) {
-                HStack(alignment: .center, spacing: 12) {
-                    TextField("Repository path", text: $repositoryPath)
-                        .textFieldStyle(.roundedBorder)
-                    Button("Browse…") {
-                        selectRepositoryPath()
+                settingsCard(
+                    title: "Repository",
+                    description: "Choose the Git repository to clone into the disposable test workspace."
+                ) {
+                    HStack(alignment: .center, spacing: 12) {
+                        TextField("Repository path", text: $repositoryPath)
+                            .textFieldStyle(.roundedBorder)
+                        Button("Browse...") {
+                            selectRepositoryPath()
+                        }
+                        .controlSize(.large)
                     }
+                }
+
+                settingsCard(
+                    title: "Xcode Project",
+                    description: "Workspace and scheme are inferred from the repository. You can override them when needed."
+                ) {
+                    VStack(spacing: 12) {
+                        EditableComboBox(
+                            placeholder: "Workspace name, optional",
+                            text: $workspaceName,
+                            options: workspaceOptions
+                        )
+                        EditableComboBox(
+                            placeholder: "Scheme name",
+                            text: $xcodeSchemeName,
+                            options: schemeOptions
+                        )
+                    }
+                }
+
+                HStack(alignment: .top, spacing: 16) {
+                    settingsCard(
+                        title: "Default Branch",
+                        description: "Used for manual runs when you do not explicitly choose a branch."
+                    ) {
+                        TextField("Branch name", text: $branchName)
+                            .textFieldStyle(.roundedBorder)
+                    }
+
+                    settingsCard(
+                        title: "Test Parallelization",
+                        description: "Let xcodebuild execute tests and targets in parallel when supported."
+                    ) {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Toggle("Enable parallel testing", isOn: $parallelTestingEnabled)
+                                .toggleStyle(.switch)
+                            Stepper("Build jobs: \(parallelBuildJobCount)", value: $parallelBuildJobCount, in: 1...32)
+                        }
+                    }
+                }
+
+                settingsCard(
+                    title: "Pre-Build Script",
+                    description: "Optional shell script to run in the prepared workspace before the build starts. A non-zero exit code cancels the run."
+                ) {
+                    TextField("Shell script", text: $preBuildScript)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(.body, design: .monospaced))
+                }
+
+                settingsCard(
+                    title: "Automation",
+                    description: "Comma-separated branch prefixes are ignored for incoming post-hook triggers. Manual runs are still allowed."
+                ) {
+                    TextField("codex/, spike/, wip/", text: $ignoredAutomaticBranchPrefixes)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(.body, design: .monospaced))
+                }
+
+                HStack {
+                    Spacer()
+                    Button("Cancel") {
+                        NSApp.sendAction(#selector(NSWindow.close), to: nil, from: nil)
+                    }
+                    .controlSize(.large)
+
+                    Button("Save") {
+                        saveSettings()
+                        NSApp.sendAction(#selector(NSWindow.close), to: nil, from: nil)
+                    }
+                    .buttonStyle(.borderedProminent)
                     .controlSize(.large)
                 }
             }
-
-            HStack(alignment: .top, spacing: 16) {
-                settingsCard(
-                    title: "Default Branch",
-                    description: "Used for manual runs when you do not explicitly choose a branch."
-                ) {
-                    TextField("Branch name", text: $branchName)
-                        .textFieldStyle(.roundedBorder)
-                }
-
-                settingsCard(
-                    title: "Test Parallelization",
-                    description: "Let xcodebuild execute tests in parallel when supported."
-                ) {
-                    Toggle("Enable parallel testing", isOn: $parallelTestingEnabled)
-                        .toggleStyle(.switch)
-                }
-            }
-
-            settingsCard(
-                title: "Pre-Build Script",
-                description: "Optional shell script to run in the prepared workspace before the build starts. A non-zero exit code cancels the run."
-            ) {
-                TextField("Shell script", text: $preBuildScript)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(.body, design: .monospaced))
-            }
-
-            settingsCard(
-                title: "Ignore Automatic Branches",
-                description: "Comma-separated branch prefixes that should ignore incoming post-hook triggers. Manual runs are still allowed."
-            ) {
-                TextField("codex/, spike/, wip/", text: $ignoredAutomaticBranchPrefixes)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(.body, design: .monospaced))
-            }
-
-            HStack {
-                Spacer()
-                Button("Cancel") {
-                    NSApp.sendAction(#selector(NSWindow.close), to: nil, from: nil)
-                }
-                .controlSize(.large)
-
-                Button("Save") {
-                    saveSettings()
-                    NSApp.sendAction(#selector(NSWindow.close), to: nil, from: nil)
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-            }
+            .padding(.horizontal, 24)
+            .padding(.top, 24)
+            .padding(.bottom, 22)
         }
-        .padding(.horizontal, 24)
-        .padding(.top, 24)
-        .padding(.bottom, 22)
         .background(Color(nsColor: .windowBackgroundColor))
         .onAppear {
             repositoryPath = settings.repositoryPath
+            workspaceName = settings.workspaceName
+            xcodeSchemeName = settings.xcodeSchemeName
             branchName = settings.branchName ?? ""
             ignoredAutomaticBranchPrefixes = settings.ignoredAutomaticBranchPrefixes
             parallelTestingEnabled = settings.parallelTestingEnabled
+            parallelBuildJobCount = settings.parallelBuildJobCount
             preBuildScript = settings.preBuildScript
+            inferProjectSettingsIfPossible()
+        }
+        .onChange(of: repositoryPath) { _, _ in
+            inferProjectSettingsIfPossible()
+        }
+        .onChange(of: workspaceName) { _, _ in
+            refreshSchemeOptions()
         }
     }
     
@@ -109,15 +147,73 @@ struct SettingsView: View {
         if panel.runModal() == .OK {
             if let url = panel.url {
                 repositoryPath = url.path
+                inferProjectSettingsIfPossible(force: true)
             }
         }
+    }
+
+    private func inferProjectSettingsIfPossible(force: Bool = false) {
+        let trimmedPath = repositoryPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedPath.isEmpty else { return }
+
+        let repositoryURL = URL(fileURLWithPath: trimmedPath, isDirectory: true)
+        workspaceOptions = WorkspaceFinder.findWorkspaceNames(in: repositoryURL)
+
+        let inferredWorkspaceName = WorkspaceFinder.findWorkspace(
+            in: repositoryURL,
+            preferredName: workspaceName
+        )?.lastPathComponent ?? ""
+        if force || workspaceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            workspaceName = inferredWorkspaceName
+        }
+
+        let schemeWorkspaceName = workspaceName.isEmpty ? inferredWorkspaceName : workspaceName
+        schemeOptions = WorkspaceFinder.findSchemeNames(in: repositoryURL, preferredWorkspaceName: schemeWorkspaceName)
+        let inferredSchemeName = schemeOptions.first ?? ""
+        if force || shouldReplaceInferredSchemeName(xcodeSchemeName, with: inferredSchemeName) {
+            xcodeSchemeName = inferredSchemeName
+        }
+    }
+
+    private func refreshSchemeOptions() {
+        let trimmedPath = repositoryPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedPath.isEmpty else {
+            schemeOptions = []
+            return
+        }
+
+        let repositoryURL = URL(fileURLWithPath: trimmedPath, isDirectory: true)
+        schemeOptions = WorkspaceFinder.findSchemeNames(
+            in: repositoryURL,
+            preferredWorkspaceName: workspaceName
+        )
+    }
+
+    private func shouldReplaceInferredSchemeName(_ schemeName: String, with inferredSchemeName: String) -> Bool {
+        let lowercasedSchemeName = schemeName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let lowercasedInferredSchemeName = inferredSchemeName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if WorkspaceFinder.isTestSchemeName(lowercasedInferredSchemeName),
+           !WorkspaceFinder.isTestSchemeName(lowercasedSchemeName) {
+            return true
+        }
+
+        return lowercasedSchemeName.isEmpty ||
+        [
+            "all",
+            "aggregate",
+            "build all",
+            "everything"
+        ].contains(lowercasedSchemeName)
     }
     
     private func saveSettings() {
         settings.setRepositoryPath(repositoryPath)
+        settings.setWorkspaceName(workspaceName)
+        settings.setXcodeSchemeName(xcodeSchemeName)
         settings.setBranchName(branchName.isEmpty ? nil : branchName)
         settings.setIgnoredAutomaticBranchPrefixes(ignoredAutomaticBranchPrefixes)
         settings.setParallelTestingEnabled(parallelTestingEnabled)
+        settings.setParallelBuildJobCount(parallelBuildJobCount)
         settings.setPreBuildScript(preBuildScript)
     }
 
@@ -159,5 +255,99 @@ struct SettingsView: View {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .stroke(Color.primary.opacity(0.06), lineWidth: 1)
         )
+    }
+}
+
+struct EditableComboBox: NSViewRepresentable {
+    let placeholder: String
+    @Binding var text: String
+    let options: [String]
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(text: $text)
+    }
+
+    func makeNSView(context: Context) -> CompletingComboBox {
+        let comboBox = CompletingComboBox()
+        comboBox.delegate = context.coordinator
+        comboBox.usesDataSource = false
+        comboBox.completes = true
+        comboBox.isEditable = true
+        comboBox.hasVerticalScroller = true
+        comboBox.numberOfVisibleItems = 12
+        comboBox.placeholderString = placeholder
+        comboBox.target = context.coordinator
+        comboBox.action = #selector(Coordinator.comboBoxAction(_:))
+        comboBox.translatesAutoresizingMaskIntoConstraints = false
+        comboBox.heightAnchor.constraint(equalToConstant: 24).isActive = true
+        context.coordinator.comboBox = comboBox
+        return comboBox
+    }
+
+    func updateNSView(_ comboBox: CompletingComboBox, context: Context) {
+        context.coordinator.text = $text
+        comboBox.completionOptions = options
+
+        if comboBox.stringValue != text {
+            comboBox.stringValue = text
+        }
+
+        let currentItems = (0..<comboBox.numberOfItems).compactMap { comboBox.itemObjectValue(at: $0) as? String }
+        if currentItems != options {
+            comboBox.removeAllItems()
+            comboBox.addItems(withObjectValues: options)
+        }
+    }
+
+    final class Coordinator: NSObject, NSComboBoxDelegate {
+        var text: Binding<String>
+        weak var comboBox: CompletingComboBox?
+
+        init(text: Binding<String>) {
+            self.text = text
+        }
+
+        @objc func comboBoxAction(_ sender: NSComboBox) {
+            text.wrappedValue = sender.stringValue
+        }
+
+        func controlTextDidChange(_ notification: Notification) {
+            guard let comboBox = notification.object as? NSComboBox else { return }
+            text.wrappedValue = comboBox.stringValue
+        }
+
+        func comboBoxSelectionDidChange(_ notification: Notification) {
+            guard let comboBox = notification.object as? NSComboBox else { return }
+            text.wrappedValue = comboBox.stringValue
+        }
+    }
+}
+
+final class CompletingComboBox: NSComboBox {
+    var completionOptions: [String] = []
+
+    override func keyDown(with event: NSEvent) {
+        if event.charactersIgnoringModifiers == "\t",
+           completeCurrentText() {
+            return
+        }
+
+        super.keyDown(with: event)
+    }
+
+    private func completeCurrentText() -> Bool {
+        let currentText = stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !currentText.isEmpty else { return false }
+
+        guard let completion = completionOptions.first(where: {
+            $0.localizedCaseInsensitiveContains(currentText)
+        }) else {
+            return false
+        }
+
+        stringValue = completion
+        sendAction(action, to: target)
+        currentEditor()?.selectedRange = NSRange(location: completion.count, length: 0)
+        return true
     }
 }

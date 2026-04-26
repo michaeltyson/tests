@@ -357,7 +357,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUserNoti
     
     @objc func showSettingsWindow() {
         if let window = settingsWindow {
-            let contentSize = NSSize(width: 700, height: 560)
+            let contentSize = NSSize(width: 760, height: 720)
             window.contentMinSize = contentSize
             window.contentMaxSize = contentSize
             window.setContentSize(contentSize)
@@ -473,7 +473,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUserNoti
     func setupSettingsWindow() {
         let contentView = SettingsView()
         let hostingView = NSHostingView(rootView: contentView)
-        let windowSize = NSSize(width: 700, height: 560)
+        let windowSize = NSSize(width: 760, height: 720)
         
         let window = NSWindow(
             contentRect: NSRect(origin: .zero, size: windowSize),
