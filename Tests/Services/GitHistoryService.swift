@@ -200,6 +200,28 @@ final class GitHistoryService {
             }
     }
 
+    static func defaultBranchName(
+        remoteHeadOutput: String?,
+        currentBranchOutput: String?,
+        branchNames: [String]
+    ) -> String? {
+        if let remoteHeadBranch = normalizedBranchName(remoteHeadOutput),
+           branchNames.contains(remoteHeadBranch) {
+            return remoteHeadBranch
+        }
+
+        for conventionalName in ["main", "master", "develop"] where branchNames.contains(conventionalName) {
+            return conventionalName
+        }
+
+        if let currentBranch = normalizedBranchName(currentBranchOutput),
+           branchNames.contains(currentBranch) {
+            return currentBranch
+        }
+
+        return branchNames.first
+    }
+
     static func relevantBranchNames(
         testRuns: [TestRun],
         currentTestRun: TestRun?,
@@ -401,6 +423,23 @@ enum GitBranchFinder {
         let result = runGitCommand(["branch", "-a"], in: repositoryURL)
         guard result.success else { return [] }
         return GitHistoryService.normalizedBranchNames(fromBranchList: result.output)
+    }
+
+    static func findDefaultBranchName(in repositoryURL: URL, branchNames: [String]) -> String? {
+        let remoteHeadResult = runGitCommand(
+            ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"],
+            in: repositoryURL
+        )
+        let currentBranchResult = runGitCommand(
+            ["branch", "--show-current"],
+            in: repositoryURL
+        )
+
+        return GitHistoryService.defaultBranchName(
+            remoteHeadOutput: remoteHeadResult.success ? remoteHeadResult.output : nil,
+            currentBranchOutput: currentBranchResult.success ? currentBranchResult.output : nil,
+            branchNames: branchNames
+        )
     }
 
     private static func runGitCommand(_ arguments: [String], in repositoryURL: URL) -> (success: Bool, output: String) {

@@ -154,6 +154,7 @@ struct SettingsView: View {
             if let url = panel.url {
                 repositoryPath = url.path
                 inferProjectSettingsIfPossible(force: true)
+                refreshBranchOptions(force: true)
             }
         }
     }
@@ -195,7 +196,7 @@ struct SettingsView: View {
         )
     }
 
-    private func refreshBranchOptions() {
+    private func refreshBranchOptions(force: Bool = false) {
         let trimmedPath = repositoryPath.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedPath.isEmpty else {
             branchOptions = []
@@ -205,10 +206,17 @@ struct SettingsView: View {
         DispatchQueue.global(qos: .userInitiated).async {
             let repositoryURL = URL(fileURLWithPath: trimmedPath, isDirectory: true)
             let options = GitBranchFinder.findBranchNames(in: repositoryURL)
+            let defaultBranchName = GitBranchFinder.findDefaultBranchName(
+                in: repositoryURL,
+                branchNames: options
+            )
 
             DispatchQueue.main.async {
                 guard repositoryPath.trimmingCharacters(in: .whitespacesAndNewlines) == trimmedPath else { return }
                 branchOptions = options
+                if force || branchName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    branchName = defaultBranchName ?? ""
+                }
             }
         }
     }

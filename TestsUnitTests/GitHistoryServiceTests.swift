@@ -45,6 +45,39 @@ final class GitHistoryServiceTests: XCTestCase {
         )
     }
 
+    func testDefaultBranchNamePrefersOriginHead() {
+        XCTAssertEqual(
+            GitHistoryService.defaultBranchName(
+                remoteHeadOutput: "origin/release/1.0\n",
+                currentBranchOutput: "develop\n",
+                branchNames: ["develop", "main", "release/1.0"]
+            ),
+            "release/1.0"
+        )
+    }
+
+    func testDefaultBranchNameFallsBackToConventionalNamesBeforeCurrentBranch() {
+        XCTAssertEqual(
+            GitHistoryService.defaultBranchName(
+                remoteHeadOutput: nil,
+                currentBranchOutput: "feature/login\n",
+                branchNames: ["feature/login", "main"]
+            ),
+            "main"
+        )
+    }
+
+    func testDefaultBranchNameFallsBackToCurrentBranch() {
+        XCTAssertEqual(
+            GitHistoryService.defaultBranchName(
+                remoteHeadOutput: nil,
+                currentBranchOutput: "feature/login\n",
+                branchNames: ["feature/login", "release/1.0"]
+            ),
+            "feature/login"
+        )
+    }
+
     func testRelevantBranchNamesUseTestedBranchesBeforeFallback() {
         var run = TestRun(status: .success)
         run.branchName = "origin/develop"
