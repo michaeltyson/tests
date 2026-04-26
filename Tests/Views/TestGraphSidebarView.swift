@@ -10,6 +10,7 @@ struct TestGraphSidebarView: View {
     @ObservedObject var settings = SettingsStore.shared
     @ObservedObject var testResultStore: TestResultStore
     @ObservedObject var testRunner: TestRunner
+    let branchFilterText: String
     @Binding var selectedCommit: GitCommitNode?
     @Binding var selectedTestRun: TestRun?
 
@@ -19,6 +20,29 @@ struct TestGraphSidebarView: View {
     @State private var loadGeneration = UUID()
 
     private let historyService = GitHistoryService()
+
+    private var branchFilterQuery: String {
+        branchFilterText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var isFilteringBranches: Bool {
+        !branchFilterQuery.isEmpty
+    }
+
+    private var matchingCommits: [GitCommitNode] {
+        guard isFilteringBranches else { return commits }
+
+        return commits.filter { commit in
+            commit.branchNames.contains { branchName in
+                branchName.localizedCaseInsensitiveContains(branchFilterQuery)
+            } || commit.testRun?.branchName?.localizedCaseInsensitiveContains(branchFilterQuery) == true
+        }
+    }
+
+    private var displayedCommits: [GitCommitNode] {
+        guard isFilteringBranches else { return commits }
+        return Self.relayoutCommitsForVisibleRows(matchingCommits)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -69,11 +93,22 @@ struct TestGraphSidebarView: View {
                 Spacer()
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if displayedCommits.isEmpty {
+            VStack(spacing: 8) {
+                Spacer()
+                Text("No branches match this filter.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal)
+                Spacer()
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             GeometryReader { geometry in
                 ScrollView(.vertical) {
                     VStack(spacing: 0) {
-                        ForEach(commits) { commit in
+                        ForEach(displayedCommits) { commit in
                             TestGraphCommitRow(
                                 commit: commit,
                                 isSelected: selectedCommit?.id == commit.id
@@ -90,6 +125,26 @@ struct TestGraphSidebarView: View {
                 }
                 .background(.thinMaterial)
             }
+        }
+    }
+
+    private static func relayoutCommitsForVisibleRows(_ commits: [GitCommitNode]) -> [GitCommitNode] {
+        commits.enumerated().map { index, commit in
+            return GitCommitNode(
+                sha: commit.sha,
+                shortSHA: commit.shortSHA,
+                subject: commit.subject,
+                authorDate: commit.authorDate,
+                parentSHAs: commit.parentSHAs,
+                branchNames: commit.branchNames,
+                laneIndex: 0,
+                laneCount: 1,
+                topLanes: index == 0 ? [] : [0],
+                bottomLanes: index == commits.indices.last ? [] : [0],
+                topConnections: [],
+                bottomConnections: [],
+                testRun: commit.testRun
+            )
         }
     }
 

@@ -32,6 +32,7 @@ struct TestHistoryView: View {
     @State private var runTestsInModifierActive = false
     @State private var localModifierMonitor: Any?
     @State private var globalModifierMonitor: Any?
+    @State private var branchFilterText = ""
     
     private var sidebarTestRuns: [TestRun] {
         var runs = testResultStore.testRuns
@@ -44,6 +45,15 @@ struct TestHistoryView: View {
         }
         
         return runs
+    }
+
+    private var filteredSidebarTestRuns: [TestRun] {
+        let query = branchFilterText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return sidebarTestRuns }
+
+        return sidebarTestRuns.filter { testRun in
+            testRun.branchName?.localizedCaseInsensitiveContains(query) == true
+        }
     }
 
     private var selectedSidebarTab: TestHistorySidebarTab {
@@ -283,6 +293,7 @@ struct TestHistoryView: View {
             HStack(alignment: .center) {
                 TestHistorySidebarTabBar(selection: selectedSidebarTabBinding)
                 Spacer(minLength: 12)
+                TestHistoryBranchFilterField(text: $branchFilterText)
             }
             .padding(.horizontal, 18)
             .padding(.top, 12)
@@ -297,6 +308,7 @@ struct TestHistoryView: View {
                 TestGraphSidebarView(
                     testResultStore: testResultStore,
                     testRunner: testRunner,
+                    branchFilterText: branchFilterText,
                     selectedCommit: $selectedCommit,
                     selectedTestRun: $selectedTestRun
                 )
@@ -306,7 +318,7 @@ struct TestHistoryView: View {
 
     private var runsSidebar: some View {
         VStack(spacing: 0) {
-            List(sidebarTestRuns, selection: $selectedTestRun) { testRun in
+            List(filteredSidebarTestRuns, selection: $selectedTestRun) { testRun in
                 TestRunRow(
                     testRun: testRun,
                     isCurrentRun: testRunner.currentTestRun?.id == testRun.id,
@@ -324,18 +336,6 @@ struct TestHistoryView: View {
                     selectedCommit = nil
                 }
             }
-
-            Divider()
-
-            HStack {
-                Button(action: clearHistory) {
-                    Text("Clear All")
-                }
-                .buttonStyle(.bordered)
-                Spacer()
-            }
-            .padding()
-            .background(.thinMaterial)
         }
     }
     
@@ -349,21 +349,6 @@ struct TestHistoryView: View {
         testResultStore.delete(testRun)
         if selectedTestRun?.id == testRun.id {
             selectedTestRun = nil
-        }
-    }
-    
-    private func clearHistory() {
-        let alert = NSAlert()
-        alert.messageText = "Clear Test Reports"
-        alert.informativeText = "Are you sure you want to delete all test runs? This action cannot be undone."
-        alert.addButton(withTitle: "Cancel")
-        alert.addButton(withTitle: "Clear All")
-        alert.alertStyle = .warning
-        
-        if alert.runModal() == .alertSecondButtonReturn {
-            testResultStore.clearAll()
-            selectedTestRun = nil
-            selectedCommit = nil
         }
     }
     
@@ -461,6 +446,50 @@ private struct TestHistorySidebarTabBar: View {
         .overlay(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5)
+        )
+    }
+}
+
+private struct TestHistoryBranchFilterField: View {
+    @Binding var text: String
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(.secondary)
+
+            TextField("Branch", text: $text)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12))
+                .focused($isFocused)
+
+            if !text.isEmpty {
+                Button {
+                    text = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(.secondary.opacity(0.75))
+                }
+                .buttonStyle(.plain)
+                .help("Clear branch filter")
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .frame(minWidth: 98, idealWidth: 120, maxWidth: 160)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.primary.opacity(isFocused ? 0.09 : 0.05))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(
+                    isFocused ? Color.accentColor.opacity(0.45) : Color.primary.opacity(0.08),
+                    lineWidth: 0.5
+                )
         )
     }
 }
