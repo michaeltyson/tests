@@ -110,14 +110,14 @@ final class TestRunnerQueueTests: XCTestCase {
                   "children" : [
                     {
                       "nodeType" : "Test Case",
-                      "nodeIdentifier" : "LoopyTests/LPExampleTests/testFailure",
+                      "nodeIdentifier" : "ExampleTests/CalculatorTests/testFailure",
                       "result" : "Failed",
                       "children" : [
                         {
                           "nodeType" : "Failure Message",
                           "name" : "XCTAssertEqual failed: (\\"1\\") is not equal to (\\"2\\")",
                           "documentLocationInCreatingWorkspace" : {
-                            "url" : "file:///tmp/LPExampleTests.swift",
+                            "url" : "file:///tmp/CalculatorTests.swift",
                             "lineNumber" : 42
                           }
                         },
@@ -140,9 +140,9 @@ final class TestRunnerQueueTests: XCTestCase {
             summaries,
             [
                 TestRunner.XCResultFailureSummary(
-                    identifier: "LoopyTests/LPExampleTests/testFailure",
+                    identifier: "ExampleTests/CalculatorTests/testFailure",
                     messages: [
-                        "/tmp/LPExampleTests.swift:42: XCTAssertEqual failed: (\"1\") is not equal to (\"2\")",
+                        "/tmp/CalculatorTests.swift:42: XCTAssertEqual failed: (\"1\") is not equal to (\"2\")",
                         "Additional context"
                     ]
                 )
@@ -210,11 +210,11 @@ final class TestRunnerQueueTests: XCTestCase {
     }
 
     func testWorkspaceBuildArtifactDirectoryUsesLocalDerivedDataFolder() {
-        let workspaceURL = URL(fileURLWithPath: "/tmp/LoopyWorkspace", isDirectory: true)
+        let workspaceURL = URL(fileURLWithPath: "/tmp/ExampleWorkspace", isDirectory: true)
 
         XCTAssertEqual(
             TestRunner.workspaceBuildArtifactDirectory(in: workspaceURL).path,
-            "/tmp/LoopyWorkspace/.DerivedData"
+            "/tmp/ExampleWorkspace/.DerivedData"
         )
     }
 
@@ -223,6 +223,260 @@ final class TestRunnerQueueTests: XCTestCase {
             TestRunner.workspaceBuildArtifactDirectoryNames,
             [".DerivedData", "DerivedData", "build"]
         )
+    }
+
+    func testWorkspaceFinderUsesPreferredWorkspaceName() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        let firstWorkspace = root.appendingPathComponent("First.xcworkspace", isDirectory: true)
+        let preferredWorkspace = root.appendingPathComponent("Preferred.xcworkspace", isDirectory: true)
+        try FileManager.default.createDirectory(at: firstWorkspace, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: preferredWorkspace, withIntermediateDirectories: true)
+
+        XCTAssertEqual(
+            WorkspaceFinder.findWorkspace(in: root, preferredName: "Preferred")?.lastPathComponent,
+            "Preferred.xcworkspace"
+        )
+    }
+
+    func testWorkspaceFinderFallsBackWhenPreferredWorkspaceIsMissing() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        try FileManager.default.createDirectory(
+            at: root.appendingPathComponent("Only.xcworkspace", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+
+        XCTAssertEqual(
+            WorkspaceFinder.findWorkspace(in: root, preferredName: "Missing")?.lastPathComponent,
+            "Only.xcworkspace"
+        )
+    }
+
+    func testWorkspaceFinderFindsSharedSchemeName() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        let schemesDirectory = root
+            .appendingPathComponent("Example.xcodeproj", isDirectory: true)
+            .appendingPathComponent("xcshareddata", isDirectory: true)
+            .appendingPathComponent("xcschemes", isDirectory: true)
+        try FileManager.default.createDirectory(at: schemesDirectory, withIntermediateDirectories: true)
+        try """
+        <Scheme>
+          <TestAction>
+            <Testables>
+              <TestableReference />
+            </Testables>
+          </TestAction>
+        </Scheme>
+        """.write(
+            to: schemesDirectory.appendingPathComponent("Example.xcscheme"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        XCTAssertEqual(
+            WorkspaceFinder.findSchemeName(in: root, preferredWorkspaceName: "Example.xcworkspace"),
+            "Example"
+        )
+    }
+
+    func testWorkspaceFinderPrefersMacSchemeOverAllScheme() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        let schemesDirectory = root
+            .appendingPathComponent("Example.xcodeproj", isDirectory: true)
+            .appendingPathComponent("xcshareddata", isDirectory: true)
+            .appendingPathComponent("xcschemes", isDirectory: true)
+        try FileManager.default.createDirectory(at: schemesDirectory, withIntermediateDirectories: true)
+        for schemeName in ["all", "Example (iOS)", "Example (macOS)"] {
+            let schemeContents = schemeName == "Example (macOS)"
+                ? """
+                <Scheme>
+                  <TestAction>
+                    <Testables>
+                      <TestableReference />
+                      <TestableReference />
+                    </Testables>
+                  </TestAction>
+                </Scheme>
+                """
+                : "<Scheme />"
+            try schemeContents.write(
+                to: schemesDirectory.appendingPathComponent("\(schemeName).xcscheme"),
+                atomically: true,
+                encoding: .utf8
+            )
+        }
+
+        XCTAssertEqual(
+            WorkspaceFinder.findSchemeName(in: root, preferredWorkspaceName: "Example.xcworkspace"),
+            "Example (macOS)"
+        )
+    }
+
+    func testWorkspaceFinderPrefersRootProjectSchemeOverDependencyScheme() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        let dependencySchemesDirectory = root
+            .appendingPathComponent("Library", isDirectory: true)
+            .appendingPathComponent("ExampleSupport.xcodeproj", isDirectory: true)
+            .appendingPathComponent("xcshareddata", isDirectory: true)
+            .appendingPathComponent("xcschemes", isDirectory: true)
+        let rootSchemesDirectory = root
+            .appendingPathComponent("Example.xcodeproj", isDirectory: true)
+            .appendingPathComponent("xcshareddata", isDirectory: true)
+            .appendingPathComponent("xcschemes", isDirectory: true)
+        try FileManager.default.createDirectory(at: dependencySchemesDirectory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: rootSchemesDirectory, withIntermediateDirectories: true)
+        try """
+        <Scheme>
+          <TestAction>
+            <Testables>
+              <TestableReference />
+            </Testables>
+          </TestAction>
+        </Scheme>
+        """.write(
+            to: dependencySchemesDirectory.appendingPathComponent("ExampleSupport macOS.xcscheme"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try """
+        <Scheme>
+          <TestAction>
+            <Testables>
+              <TestableReference />
+            </Testables>
+          </TestAction>
+        </Scheme>
+        """.write(
+            to: rootSchemesDirectory.appendingPathComponent("Example (macOS).xcscheme"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        XCTAssertEqual(
+            WorkspaceFinder.findSchemeName(in: root, preferredWorkspaceName: "Example.xcworkspace"),
+            "Example (macOS)"
+        )
+    }
+
+    func testWorkspaceFinderPrefersSchemeWithTestables() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        let schemesDirectory = root
+            .appendingPathComponent("Example.xcodeproj", isDirectory: true)
+            .appendingPathComponent("xcshareddata", isDirectory: true)
+            .appendingPathComponent("xcschemes", isDirectory: true)
+        try FileManager.default.createDirectory(at: schemesDirectory, withIntermediateDirectories: true)
+        try "<Scheme />".write(
+            to: schemesDirectory.appendingPathComponent("Example.xcscheme"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try """
+        <Scheme>
+          <TestAction>
+            <Testables>
+              <TestableReference />
+            </Testables>
+          </TestAction>
+        </Scheme>
+        """.write(
+            to: schemesDirectory.appendingPathComponent("Example Tests.xcscheme"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        XCTAssertEqual(
+            WorkspaceFinder.findSchemeName(in: root, preferredWorkspaceName: "Example.xcworkspace"),
+            "Example Tests"
+        )
+    }
+
+    func testWorkspaceFinderPrefersFocusedTestSchemeOverProductSchemeWithMoreTestables() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        let productSchemesDirectory = root
+            .appendingPathComponent("Example Pro.xcodeproj", isDirectory: true)
+            .appendingPathComponent("xcshareddata", isDirectory: true)
+            .appendingPathComponent("xcschemes", isDirectory: true)
+        let testSchemesDirectory = root
+            .appendingPathComponent("Common", isDirectory: true)
+            .appendingPathComponent("Example.xcodeproj", isDirectory: true)
+            .appendingPathComponent("xcshareddata", isDirectory: true)
+            .appendingPathComponent("xcschemes", isDirectory: true)
+        try FileManager.default.createDirectory(at: productSchemesDirectory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: testSchemesDirectory, withIntermediateDirectories: true)
+        try """
+        <Scheme>
+          <TestAction>
+            <Testables>
+              <TestableReference />
+              <TestableReference />
+              <TestableReference />
+              <TestableReference />
+              <TestableReference />
+              <TestableReference />
+            </Testables>
+          </TestAction>
+        </Scheme>
+        """.write(
+            to: productSchemesDirectory.appendingPathComponent("Example Pro (macOS).xcscheme"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try """
+        <Scheme>
+          <TestAction>
+            <Testables>
+              <TestableReference />
+            </Testables>
+          </TestAction>
+        </Scheme>
+        """.write(
+            to: testSchemesDirectory.appendingPathComponent("Example Tests macOS.xcscheme"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        XCTAssertEqual(
+            WorkspaceFinder.findSchemeName(in: root, preferredWorkspaceName: "Example Pro.xcworkspace"),
+            "Example Tests macOS"
+        )
+    }
+
+    func testInferredXcodeDestinationUsesMacOSPlatform() {
+        XCTAssertTrue(TestRunner.inferredXcodeDestination().hasPrefix("platform=macOS"))
     }
 
     func testWorkspaceCleanupSkippedWithoutPreviousRef() {

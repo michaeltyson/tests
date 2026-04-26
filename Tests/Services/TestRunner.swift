@@ -59,6 +59,7 @@ class TestRunner: ObservableObject {
     private static let totalCountKey = "com.atastypixel.Tests.lastTotalCount"
     private static let lastPreparedWorkspaceRefKey = "com.atastypixel.Tests.lastPreparedWorkspaceRef"
     private static let defaultWatchdogCheckInterval: TimeInterval = 15
+    private static let testInactivityTimeoutInterval: TimeInterval = 10 * 60
     static let sourceRemoteTrackingFetchRefspec = "+refs/remotes/origin/*:refs/remotes/source-origin/*"
 
     private struct PendingRunRequest {
@@ -113,7 +114,7 @@ class TestRunner: ObservableObject {
             showError("Repository path not configured", message: "Please configure the repository path in Settings.")
             return
         }
-        
+
         // Determine which branch to use: notification branch > settings branch > "develop".
         let branchToUse = resolvedBranchName(for: branchName, defaultBranch: settings.branchName)
 
@@ -276,14 +277,32 @@ class TestRunner: ObservableObject {
                 self.output += "Finding workspace...\n"
             }
             print("TestRunner: Searching for workspace file in: \(branchWorkspace.path)")
-            guard let workspaceURL = WorkspaceFinder.findWorkspace(in: branchWorkspace) else {
+            guard let workspaceURL = WorkspaceFinder.findWorkspace(in: branchWorkspace, preferredName: settings.workspaceName) else {
                 print("TestRunner: ERROR - Could not find .xcworkspace file in repository root")
+                let configuredWorkspaceName = settings.workspaceName.trimmingCharacters(in: .whitespacesAndNewlines)
+                let workspaceMessage = configuredWorkspaceName.isEmpty
+                    ? "Could not find a .xcworkspace file in the repository root. Please check the repository path in Settings."
+                    : "Could not find '\(configuredWorkspaceName)' in the repository root. Please check the workspace name in Settings."
                 self.abortRun(removeCurrentRun: true)
-                self.showError("Workspace not found", message: "Could not find .xcworkspace file in repository root. Please check the repository path in Settings.")
+                self.showError("Workspace not found", message: workspaceMessage)
                 return
             }
             
             print("TestRunner: Found workspace: \(workspaceURL.path)")
+
+            let configuredSchemeName = settings.xcodeSchemeName.trimmingCharacters(in: .whitespacesAndNewlines)
+            let schemeName = configuredSchemeName.isEmpty
+                ? WorkspaceFinder.findSchemeName(in: branchWorkspace, preferredWorkspaceName: workspaceURL.deletingPathExtension().lastPathComponent)
+                : configuredSchemeName
+            guard let schemeName, !schemeName.isEmpty else {
+                print("TestRunner: ERROR - Could not infer Xcode scheme")
+                self.abortRun(removeCurrentRun: true)
+                self.showError(
+                    "Scheme not found",
+                    message: "Could not infer an Xcode scheme from the repository. Please choose a scheme in Settings."
+                )
+                return
+            }
 
             if self.shouldStopBeforeLaunchingProcess() { return }
 
@@ -313,7 +332,12 @@ class TestRunner: ObservableObject {
             DispatchQueue.main.async {
                 self.output += "Starting build...\n\n"
                 print("TestRunner: Starting xcodebuild build+test pipeline...")
-                self.runXcodebuildTests(workspaceURL: workspaceURL, branchName: branchToUse, workspaceDirectory: branchWorkspace)
+                self.runXcodebuildTests(
+                    workspaceURL: workspaceURL,
+                    schemeName: schemeName,
+                    branchName: branchToUse,
+                    workspaceDirectory: branchWorkspace
+                )
             }
         }
     }
@@ -859,7 +883,7 @@ class TestRunner: ObservableObject {
         return sha.isEmpty ? nil : sha
     }
     
-    private func runXcodebuildTests(workspaceURL: URL, branchName: String, workspaceDirectory: URL) {
+    private func runXcodebuildTests(workspaceURL: URL, schemeName: String, branchName: String, workspaceDirectory: URL) {
         if isCancelled {
             print("TestRunner: Run was canceled before xcodebuild launch")
             isCancelled = false
@@ -877,9 +901,11 @@ class TestRunner: ObservableObject {
             sendTestStartNotification(branchName: branchName)
         }
 
+        let settings = SettingsStore.shared
+        let destination = Self.inferredXcodeDestination()
         let escapedWorkspacePath = shellEscape(workspaceURL.path)
-        let escapedScheme = shellEscape("Loopy Pro (macOS)")
-        let escapedDestination = shellEscape("platform=macOS,arch=arm64")
+        let escapedScheme = shellEscape(schemeName)
+        let escapedDestination = shellEscape(destination)
         let escapedDerivedDataPath = shellEscape(workspaceBuildArtifactDirectory(in: workspaceDirectory).path)
         let performanceArguments = Self.xcodebuildPerformanceArguments()
             .map(shellEscape)
@@ -887,8 +913,8 @@ class TestRunner: ObservableObject {
         let parallelBuildArguments = xcodebuildParallelBuildArguments(
             workspaceURL: workspaceURL,
             workspaceDirectory: workspaceDirectory,
-            schemeName: "Loopy Pro (macOS)",
-            settings: SettingsStore.shared
+            schemeName: schemeName,
+            settings: settings
         )
             .map(shellEscape)
             .joined(separator: " ")
@@ -1812,7 +1838,7 @@ class TestRunner: ObservableObject {
     }
 
     private func evaluateWatchdog(now: Date = Date()) {
-        let timeout = Self.xcodebuildTestInactivityTimeoutInterval(from: SettingsStore.shared)
+        let timeout = Self.xcodebuildTestInactivityTimeoutInterval()
         guard
             Self.watchdogShouldTrigger(
                 isBuilding: isBuilding,
@@ -2047,8 +2073,18 @@ class TestRunner: ObservableObject {
         ]
     }
 
-    static func xcodebuildTestInactivityTimeoutInterval(from settings: SettingsStore) -> TimeInterval {
-        TimeInterval(max(1, settings.testInactivityTimeoutMinutes) * 60)
+    static func xcodebuildTestInactivityTimeoutInterval() -> TimeInterval {
+        testInactivityTimeoutInterval
+    }
+
+    static func inferredXcodeDestination() -> String {
+        #if arch(arm64)
+        return "platform=macOS,arch=arm64"
+        #elseif arch(x86_64)
+        return "platform=macOS,arch=x86_64"
+        #else
+        return "platform=macOS"
+        #endif
     }
 
     static func watchdogShouldTrigger(
@@ -2199,7 +2235,7 @@ class TestRunner: ObservableObject {
             for case let fileURL as URL in enumerator {
                 guard
                     fileURL.lastPathComponent == "\(schemeName).xcscheme",
-                    let contents = try? String(contentsOf: fileURL),
+                    let contents = try? String(contentsOf: fileURL, encoding: .utf8),
                     let value = Self.schemeParallelizeBuildablesSetting(from: contents)
                 else {
                     continue
@@ -2228,7 +2264,7 @@ class TestRunner: ObservableObject {
             for case let fileURL as URL in enumerator {
                 guard
                     fileURL.lastPathComponent == "project.pbxproj",
-                    let contents = try? String(contentsOf: fileURL),
+                    let contents = try? String(contentsOf: fileURL, encoding: .utf8),
                     let value = Self.projectParallelizationSetting(from: contents)
                 else {
                     continue
