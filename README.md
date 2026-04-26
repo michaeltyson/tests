@@ -45,9 +45,9 @@ The CLI tool will be bundled at: `Tests.app/Contents/MacOS/TestsCLI`
 
 ## Setup
 
-Open the app from the built bundle. On first launch, the setup assistant guides you through choosing a repository, confirming the discovered Xcode workspace and scheme, installing the optional post-commit hook, and starting a first test run.
+Open the app from the built bundle. On first launch, Settings opens with a numbered setup flow for choosing a repository, confirming the discovered Xcode workspace and scheme, installing the optional post-commit hook, and tuning automation defaults.
 
-You can reopen the assistant later from the menu bar icon with **Setup Assistant...**, or edit the full configuration with **Settings...**.
+You can reopen the setup flow later from the menu bar icon with **Settings...**.
 
 Configure:
 

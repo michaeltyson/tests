@@ -15,7 +15,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUserNoti
     let testResultStore = TestResultStore()
     var historyWindow: NSWindow?
     var settingsWindow: NSWindow?
-    var onboardingWindow: NSWindow?
     var branchSelectionWindow: NSWindow?
     var menuBarManager: MenuBarManager?
     private var cancellables = Set<AnyCancellable>()
@@ -29,7 +28,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUserNoti
         print("AppDelegate: applicationDidFinishLaunching called")
         requestNotificationPermissions()
         setupMenuBarIfNeeded()
-        showOnboardingIfNeeded()
+        showSettingsIfNeeded()
     }
     
     private func requestNotificationPermissions() {
@@ -207,14 +206,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUserNoti
             object: nil
         )
 
-        // Listen for show onboarding window
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(showOnboardingWindow),
-            name: NSNotification.Name("ShowOnboardingWindow"),
-            object: nil
-        )
-        
         // Listen for show branch selection window
         NotificationCenter.default.addObserver(
             self,
@@ -226,14 +217,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUserNoti
         // Set up windows
         setupHistoryWindow()
         setupSettingsWindow()
-        setupOnboardingWindow()
         setupBranchSelectionWindow()
     }
 
-    private func showOnboardingIfNeeded() {
+    private func showSettingsIfNeeded() {
+        guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return }
         guard !SettingsStore.shared.isConfigured else { return }
         DispatchQueue.main.async { [weak self] in
-            self?.showOnboardingWindow()
+            self?.showSettingsWindow()
         }
     }
     
@@ -395,17 +386,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUserNoti
         }
     }
 
-    @objc func showOnboardingWindow() {
-        if onboardingWindow == nil {
-            setupOnboardingWindow()
-        }
-
-        if let window = onboardingWindow {
-            window.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
-        }
-    }
-    
     @objc func showBranchSelectionWindow() {
         // Force branch list refresh each time the picker is opened.
         NotificationCenter.default.post(name: NSNotification.Name("RefreshBranchList"), object: nil)
@@ -529,52 +509,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUserNoti
         window.isReleasedWhenClosed = false
         
         settingsWindow = window
-    }
-
-    func setupOnboardingWindow() {
-        let contentView = OnboardingView(
-            onFinish: { [weak self] runFirstTest in
-                self?.onboardingWindow?.close()
-                if runFirstTest {
-                    self?.testRunner.runTests(
-                        branchName: SettingsStore.shared.branchName,
-                        isManualRun: true
-                    )
-                    self?.showHistoryWindow()
-                }
-            },
-            onSkip: { [weak self] in
-                self?.onboardingWindow?.close()
-            }
-        )
-        let hostingView = NSHostingView(rootView: contentView)
-        let windowSize = NSSize(width: 760, height: 700)
-
-        let window = NSWindow(
-            contentRect: NSRect(origin: .zero, size: windowSize),
-            styleMask: [.titled, .closable],
-            backing: .buffered,
-            defer: false
-        )
-
-        window.title = "Setup Assistant"
-        hostingView.translatesAutoresizingMaskIntoConstraints = false
-        window.contentView = NSView(frame: NSRect(origin: .zero, size: windowSize))
-        window.contentView?.addSubview(hostingView)
-        if let contentRoot = window.contentView {
-            NSLayoutConstraint.activate([
-                hostingView.topAnchor.constraint(equalTo: contentRoot.topAnchor),
-                hostingView.leadingAnchor.constraint(equalTo: contentRoot.leadingAnchor),
-                hostingView.trailingAnchor.constraint(equalTo: contentRoot.trailingAnchor),
-                hostingView.bottomAnchor.constraint(equalTo: contentRoot.bottomAnchor)
-            ])
-        }
-        window.contentMinSize = windowSize
-        window.contentMaxSize = windowSize
-        window.center()
-        window.isReleasedWhenClosed = false
-
-        onboardingWindow = window
     }
     
     func applicationWillTerminate(_ notification: Notification) {

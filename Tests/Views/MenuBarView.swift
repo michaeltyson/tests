@@ -9,7 +9,7 @@ import SwiftUI
 import AppKit
 import Combine
 
-class MenuBarManager: ObservableObject {
+class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
     @Published var isRunning = false
     @Published var isPaused = false
     @Published var isBuilding = false
@@ -23,9 +23,11 @@ class MenuBarManager: ObservableObject {
     private var statusItem: NSStatusItem?
     private var menu: NSMenu?
     private var statusMenuItem: NSMenuItem?
+    private var runCancelMenuItem: NSMenuItem?
     private var progressView: ProgressMenuView?
     private var originalAnchorPoint: CGPoint?
     private var originalPosition: CGPoint?
+    private var modifierPollingTimer: Timer?
 
     private func popupStatusText() -> String {
         if isPaused {
@@ -86,19 +88,21 @@ class MenuBarManager: ObservableObject {
         
         // Set up menu first
         menu = NSMenu()
+        menu?.delegate = self
         statusMenuItem = NSMenuItem(title: "Status: Ready", action: nil, keyEquivalent: "")
         menu?.addItem(statusMenuItem!)
         menu?.addItem(NSMenuItem.separator())
         
         // Run Tests Now / Cancel item (same item, changes title/action based on state)
-        menu?.addItem(NSMenuItem(title: "Run Tests Now", action: #selector(runTests), keyEquivalent: "r"))
+        let runCancelMenuItem = NSMenuItem(title: "Run Tests Now", action: #selector(runTests), keyEquivalent: "r")
+        self.runCancelMenuItem = runCancelMenuItem
+        menu?.addItem(runCancelMenuItem)
         
         // Pause/Resume item (always visible, toggles to ignore incoming notifications)
         menu?.addItem(NSMenuItem(title: "Pause", action: #selector(togglePause), keyEquivalent: ""))
         
         menu?.addItem(NSMenuItem.separator())
         menu?.addItem(NSMenuItem(title: "Test Reports", action: #selector(showHistory), keyEquivalent: "h"))
-        menu?.addItem(NSMenuItem(title: "Setup Assistant...", action: #selector(showOnboarding), keyEquivalent: ""))
         menu?.addItem(NSMenuItem(title: "Settings...", action: #selector(showSettings), keyEquivalent: ","))
         menu?.addItem(NSMenuItem.separator())
         menu?.addItem(NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q"))
@@ -269,6 +273,46 @@ class MenuBarManager: ObservableObject {
             NotificationCenter.default.post(name: NSNotification.Name("RunTests"), object: nil)
         }
     }
+
+    private func runTestsTitle(for modifierFlags: NSEvent.ModifierFlags) -> String {
+        shouldShowBranchSelection(for: modifierFlags) ? "Run Tests In..." : "Run Tests Now"
+    }
+
+    private func shouldShowBranchSelection(for modifierFlags: NSEvent.ModifierFlags) -> Bool {
+        modifierFlags.contains(.option) || modifierFlags.contains(.command)
+    }
+
+    private func updateRunTestsMenuItemTitle(with modifierFlags: NSEvent.ModifierFlags? = nil) {
+        guard !isRunning else { return }
+        let flags = modifierFlags ?? NSEvent.modifierFlags
+        runCancelMenuItem?.title = runTestsTitle(for: flags)
+    }
+
+    private func startModifierKeyMonitoring() {
+        guard modifierPollingTimer == nil else { return }
+
+        let timer = Timer(timeInterval: 0.05, repeats: true) { [weak self] _ in
+            self?.updateRunTestsMenuItemTitle(with: NSEvent.modifierFlags)
+        }
+        modifierPollingTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+        RunLoop.main.add(timer, forMode: .eventTracking)
+    }
+
+    private func stopModifierKeyMonitoring() {
+        modifierPollingTimer?.invalidate()
+        modifierPollingTimer = nil
+    }
+
+    func menuWillOpen(_ menu: NSMenu) {
+        updateRunTestsMenuItemTitle()
+        startModifierKeyMonitoring()
+    }
+
+    func menuDidClose(_ menu: NSMenu) {
+        stopModifierKeyMonitoring()
+        updateRunTestsMenuItemTitle(with: [])
+    }
     
     @objc func pauseTests() {
         NotificationCenter.default.post(name: NSNotification.Name("PauseTests"), object: nil)
@@ -296,10 +340,6 @@ class MenuBarManager: ObservableObject {
     
     @objc func showSettings() {
         NotificationCenter.default.post(name: NSNotification.Name("ShowSettingsWindow"), object: nil)
-    }
-
-    @objc func showOnboarding() {
-        NotificationCenter.default.post(name: NSNotification.Name("ShowOnboardingWindow"), object: nil)
     }
     
     @objc func quit() {
@@ -349,12 +389,12 @@ class MenuBarManager: ObservableObject {
         }
         
         // Update Run Tests Now / Cancel item
-        if let runCancelItem = menu.items.first(where: { $0.action == #selector(runTests) || $0.action == #selector(cancelTests) }) {
+        if let runCancelItem = runCancelMenuItem {
             if isRunning {
                 runCancelItem.title = "Cancel"
                 runCancelItem.action = #selector(cancelTests)
             } else {
-                runCancelItem.title = "Run Tests Now"
+                runCancelItem.title = runTestsTitle(for: NSApp.currentEvent?.modifierFlags ?? [])
                 runCancelItem.action = #selector(runTests)
             }
         }

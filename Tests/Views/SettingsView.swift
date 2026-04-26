@@ -23,15 +23,16 @@ struct SettingsView: View {
     @State private var branchOptions: [String] = []
     @State private var postHookState: PostHookInstaller.State = .unknown
     @State private var postHookMessage: String = ""
+    @State private var advancedExpanded = false
     
     var body: some View {
         ScrollView {
-            VStack(spacing: 18) {
+            VStack(spacing: 16) {
                 header
 
-                settingsCard(
-                    title: "Repository",
-                    description: "Choose the Git repository to clone into the disposable test workspace."
+                numberedSettingsCard(
+                    index: "1",
+                    title: "Choose Repository"
                 ) {
                     VStack(alignment: .leading, spacing: 12) {
                         HStack(alignment: .center, spacing: 12) {
@@ -43,69 +44,111 @@ struct SettingsView: View {
                             .controlSize(.large)
                         }
 
+                        Text("Tests clones this repository into a disposable workspace before each run.")
+                            .font(.system(size: 12))
+                            .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+
                         postHookInstaller
                     }
                 }
 
-                settingsCard(
-                    title: "Xcode Project",
-                    description: "Workspace and scheme are inferred from the repository. You can override them when needed."
+                numberedSettingsCard(
+                    index: "2",
+                    title: "Confirm Xcode Project"
                 ) {
-                    VStack(spacing: 12) {
-                        EditableComboBox(
-                            placeholder: "Workspace name, optional",
+                    VStack(alignment: .leading, spacing: 10) {
+                        labeledComboBox(
+                            title: "Workspace",
+                            description: "The Xcode workspace or project file used for the test build.",
+                            placeholder: "Workspace name",
                             text: $workspaceName,
                             options: workspaceOptions
                         )
-                        EditableComboBox(
+                        labeledComboBox(
+                            title: "Scheme",
+                            description: "The scheme whose tests should run by default.",
                             placeholder: "Scheme name",
                             text: $xcodeSchemeName,
                             options: schemeOptions
                         )
-                    }
-                }
-
-                HStack(alignment: .top, spacing: 16) {
-                    settingsCard(
-                        title: "Default Branch",
-                        description: "Used for manual runs when you do not explicitly choose a branch."
-                    ) {
-                        EditableComboBox(
-                            placeholder: "Branch name",
+                        labeledComboBox(
+                            title: "Default Branch",
+                            description: "The branch used for manual runs when no branch or commit is selected.",
+                            placeholder: "Default branch",
                             text: $branchName,
                             options: branchOptions
                         )
+                        Text("These are autodetected from the repository and can be edited when the project has multiple plausible choices.")
+                            .font(.system(size: 12))
+                            .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
+                }
 
-                    settingsCard(
-                        title: "Test Parallelization",
-                        description: "Let xcodebuild execute tests and targets in parallel when supported."
-                    ) {
-                        VStack(alignment: .leading, spacing: 12) {
-                            Toggle("Enable parallel testing", isOn: $parallelTestingEnabled)
+                numberedSettingsCard(
+                    index: "3",
+                    title: "Tune Automation"
+                ) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Comma-separated branch prefixes are ignored for incoming post-hook triggers. Manual runs are still allowed.")
+                            .font(.system(size: 12))
+                            .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        TextField("codex/, spike/, wip/", text: $ignoredAutomaticBranchPrefixes)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(.body, design: .monospaced))
+                    }
+                }
+
+                DisclosureGroup("Advanced Build Options", isExpanded: $advancedExpanded) {
+                    VStack(alignment: .leading, spacing: 16) {
+                        advancedTextFieldRow(
+                            title: "Pre-Build Script",
+                            description: "Optional shell command to run in the prepared workspace before the build starts. A non-zero exit code cancels the run.",
+                            placeholder: "Shell command",
+                            text: $preBuildScript
+                        )
+
+                        Divider()
+
+                        advancedControlRow(
+                            title: "Parallel Testing",
+                            description: "Allow xcodebuild to execute tests and targets in parallel when supported."
+                        ) {
+                            Toggle("", isOn: $parallelTestingEnabled)
                                 .toggleStyle(.switch)
-                            Stepper("Build jobs: \(parallelBuildJobCount)", value: $parallelBuildJobCount, in: 1...32)
+                                .labelsHidden()
+                        }
+
+                        Divider()
+
+                        advancedControlRow(
+                            title: "Build Jobs",
+                            description: "Maximum number of concurrent build jobs passed to xcodebuild."
+                        ) {
+                            Stepper(
+                                value: $parallelBuildJobCount,
+                                in: 1...32
+                            ) {
+                                Text("\(parallelBuildJobCount)")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .monospacedDigit()
+                                    .frame(minWidth: 22, alignment: .trailing)
+                            }
                         }
                     }
+                    .padding(.top, 14)
                 }
-
-                settingsCard(
-                    title: "Pre-Build Script",
-                    description: "Optional shell script to run in the prepared workspace before the build starts. A non-zero exit code cancels the run."
-                ) {
-                    TextField("Shell script", text: $preBuildScript)
-                        .textFieldStyle(.roundedBorder)
-                        .font(.system(.body, design: .monospaced))
-                }
-
-                settingsCard(
-                    title: "Automation",
-                    description: "Comma-separated branch prefixes are ignored for incoming post-hook triggers. Manual runs are still allowed."
-                ) {
-                    TextField("codex/, spike/, wip/", text: $ignoredAutomaticBranchPrefixes)
-                        .textFieldStyle(.roundedBorder)
-                        .font(.system(.body, design: .monospaced))
-                }
+                .padding(18)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Color(nsColor: .controlBackgroundColor))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(Color.primary.opacity(0.06), lineWidth: 1)
+                )
 
                 HStack {
                     Spacer()
@@ -260,6 +303,23 @@ struct SettingsView: View {
         }
     }
 
+    private func uninstallPostHook() {
+        let trimmedPath = repositoryPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedPath.isEmpty else {
+            refreshPostHookState()
+            return
+        }
+
+        do {
+            try PostHookInstaller.uninstall(in: URL(fileURLWithPath: trimmedPath, isDirectory: true))
+            postHookState = .notInstalled
+            postHookMessage = PostHookInstaller.State.notInstalled.message
+        } catch {
+            postHookState = .installFailed(error.localizedDescription)
+            postHookMessage = error.localizedDescription
+        }
+    }
+
     private func shouldReplaceInferredSchemeName(_ schemeName: String, with inferredSchemeName: String) -> Bool {
         let lowercasedSchemeName = schemeName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let lowercasedInferredSchemeName = inferredSchemeName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -293,7 +353,7 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Test Runner Settings")
                     .font(.system(size: 28, weight: .semibold))
-                Text("Workspace, branch, and build execution defaults.")
+                Text("Choose a repository, confirm the discovered Xcode project, then tune how tests start.")
                     .font(.system(size: 13))
                     .foregroundColor(.secondary)
             }
@@ -319,32 +379,102 @@ struct SettingsView: View {
                     .font(.system(size: 12))
                     .foregroundColor(postHookState.isError ? .red : .secondary)
                     .fixedSize(horizontal: false, vertical: true)
+
+                if postHookState.canUninstall {
+                    Button("Uninstall") {
+                        uninstallPostHook()
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(.secondary)
+                }
             }
         }
     }
 
-    private func settingsCard<Content: View>(
+    private func labeledComboBox(
         title: String,
         description: String,
-        @ViewBuilder content: () -> Content
+        placeholder: String,
+        text: Binding<String>,
+        options: [String]
     ) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
+        HStack(alignment: .center, spacing: 16) {
+            settingsRowLabel(title: title, description: description)
+                .frame(width: 190, alignment: .leading)
+            EditableComboBox(
+                placeholder: placeholder,
+                text: text,
+                options: options
+            )
+            .frame(maxWidth: .infinity)
+        }
+    }
+
+    private func advancedTextFieldRow(
+        title: String,
+        description: String,
+        placeholder: String,
+        text: Binding<String>
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            settingsRowLabel(title: title, description: description)
+            TextField(placeholder, text: text)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(.body, design: .monospaced))
+        }
+    }
+
+    private func advancedControlRow<Control: View>(
+        title: String,
+        description: String,
+        @ViewBuilder control: () -> Control
+    ) -> some View {
+        HStack(alignment: .center, spacing: 18) {
+            settingsRowLabel(title: title, description: description)
+            Spacer(minLength: 16)
+            control()
+                .controlSize(.regular)
+        }
+    }
+
+    private func settingsRowLabel(title: String, description: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
             Text(title)
-                .font(.system(size: 14, weight: .semibold))
+                .font(.system(size: 12, weight: .semibold))
             Text(description)
-                .font(.system(size: 12))
+                .font(.system(size: 11))
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            content()
+        }
+    }
+
+    private func numberedSettingsCard<Content: View>(
+        index: String,
+        title: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        HStack(alignment: .top, spacing: 14) {
+            Text(index)
+                .font(.system(size: 13, weight: .semibold))
+                .frame(width: 24, height: 24)
+                .background(Circle().fill(Color.accentColor.opacity(0.14)))
+                .foregroundColor(.accentColor)
+
+            VStack(alignment: .leading, spacing: 12) {
+                Text(title)
+                    .font(.system(size: 15, weight: .semibold))
+                content()
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(18)
         .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(Color(nsColor: .controlBackgroundColor))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .stroke(Color.primary.opacity(0.06), lineWidth: 1)
         )
     }

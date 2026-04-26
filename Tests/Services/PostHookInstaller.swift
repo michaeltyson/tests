@@ -13,17 +13,22 @@ enum PostHookInstaller {
         case missingBundledHook
         case notInstalled
         case installed
+        case existingHook
         case installFailed(String)
 
         var canInstall: Bool {
             self == .notInstalled
         }
 
+        var canUninstall: Bool {
+            self == .installed
+        }
+
         var isError: Bool {
             switch self {
             case .missingGitRepository, .missingBundledHook, .installFailed:
                 return true
-            case .unknown, .missingRepository, .notInstalled, .installed:
+            case .unknown, .missingRepository, .notInstalled, .installed, .existingHook:
                 return false
             }
         }
@@ -42,6 +47,8 @@ enum PostHookInstaller {
                 return "Not installed."
             case .installed:
                 return "Installed already."
+            case .existingHook:
+                return "A post-commit hook already exists."
             case let .installFailed(message):
                 return message
             }
@@ -52,6 +59,8 @@ enum PostHookInstaller {
         case missingGitRepository
         case missingBundledHook
         case hookAlreadyExists
+        case hookNotInstalled
+        case hookNotManaged
 
         var errorDescription: String? {
             switch self {
@@ -61,6 +70,10 @@ enum PostHookInstaller {
                 return "Bundled post-commit hook script was not found."
             case .hookAlreadyExists:
                 return "Installed already."
+            case .hookNotInstalled:
+                return "Post-commit hook is not installed."
+            case .hookNotManaged:
+                return "Existing post-commit hook was not installed by Tests."
             }
         }
     }
@@ -74,7 +87,11 @@ enum PostHookInstaller {
             return .missingBundledHook
         }
 
-        return FileManager.default.fileExists(atPath: hookURL.path) ? .installed : .notInstalled
+        guard FileManager.default.fileExists(atPath: hookURL.path) else {
+            return .notInstalled
+        }
+
+        return isInstalledBundledHook(at: hookURL) ? .installed : .existingHook
     }
 
     static func install(in repositoryURL: URL) throws {
@@ -99,6 +116,23 @@ enum PostHookInstaller {
             at: hookURL,
             withDestinationURL: sourceURL
         )
+    }
+
+    static func uninstall(in repositoryURL: URL) throws {
+        guard let hookURL = postCommitHookURL(in: repositoryURL) else {
+            throw InstallError.missingGitRepository
+        }
+
+        let fileManager = FileManager.default
+        guard fileManager.fileExists(atPath: hookURL.path) else {
+            throw InstallError.hookNotInstalled
+        }
+
+        guard isInstalledBundledHook(at: hookURL) else {
+            throw InstallError.hookNotManaged
+        }
+
+        try fileManager.removeItem(at: hookURL)
     }
 
     private static func bundledPostCommitHookURL() -> URL? {
@@ -126,6 +160,17 @@ enum PostHookInstaller {
             return URL(fileURLWithPath: path)
         }
         return repositoryURL.appendingPathComponent(path)
+    }
+
+    private static func isInstalledBundledHook(at hookURL: URL) -> Bool {
+        guard let bundledURL = bundledPostCommitHookURL() else { return false }
+        guard let destination = try? FileManager.default.destinationOfSymbolicLink(atPath: hookURL.path) else {
+            return false
+        }
+
+        let destinationURL = URL(fileURLWithPath: destination, relativeTo: hookURL.deletingLastPathComponent())
+            .standardizedFileURL
+        return destinationURL.path == bundledURL.standardizedFileURL.path
     }
 
     private static func runGitCommand(_ arguments: [String], in repositoryURL: URL) -> (success: Bool, output: String) {
