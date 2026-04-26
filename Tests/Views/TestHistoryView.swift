@@ -8,10 +8,17 @@
 import SwiftUI
 import AppKit
 
+private enum TestHistorySidebarTab: String, CaseIterable {
+    case runs = "Runs"
+    case graph = "Graph"
+}
+
 struct TestHistoryView: View {
     @ObservedObject var testResultStore: TestResultStore
     @ObservedObject var testRunner: TestRunner
     @State private var selectedTestRun: TestRun?
+    @State private var selectedCommit: GitCommitNode?
+    @AppStorage("TestHistorySelectedSidebarTab") private var selectedSidebarTabRawValue = TestHistorySidebarTab.runs.rawValue
     @State private var runningPlaceholderTestRun: TestRun?
     @State private var runTestsInModifierActive = false
     @State private var localModifierMonitor: Any?
@@ -33,37 +40,22 @@ struct TestHistoryView: View {
         
         return runs
     }
+
+    private var selectedSidebarTab: TestHistorySidebarTab {
+        TestHistorySidebarTab(rawValue: selectedSidebarTabRawValue) ?? .runs
+    }
+
+    private var selectedSidebarTabBinding: Binding<TestHistorySidebarTab> {
+        Binding(
+            get: { selectedSidebarTab },
+            set: { selectedSidebarTabRawValue = $0.rawValue }
+        )
+    }
     
     var body: some View {
         HSplitView {
             // List view with translucent background
-            VStack(spacing: 0) {
-                List(sidebarTestRuns, selection: $selectedTestRun) { testRun in
-                    TestRunRow(
-                        testRun: testRun,
-                        isCurrentRun: testRunner.currentTestRun?.id == testRun.id,
-                        onDelete: {
-                            deleteTestRun(testRun)
-                        }
-                    )
-                    .tag(testRun)
-                }
-                .listStyle(.sidebar)
-                .scrollContentBackground(.hidden)
-                .background(.thinMaterial)
-                
-                Divider()
-                
-                HStack {
-                    Button(action: clearHistory) {
-                        Text("Clear All")
-                    }
-                    .buttonStyle(.bordered)
-                    Spacer()
-                }
-                .padding()
-                .background(.thinMaterial)
-            }
+            sidebar
             .frame(minWidth: 250, maxWidth: 600)
             .background(.thinMaterial)
             .background(GeometryReader { geometry in
@@ -177,9 +169,17 @@ struct TestHistoryView: View {
                     let latestTestRun = testResultStore.testRuns.first(where: { $0.id == selectedTestRun.id }) ?? selectedTestRun
                     TestDetailView(testRun: latestTestRun)
                         .id("\(latestTestRun.id)-\(latestTestRun.outputLog?.count ?? 0)")
+                } else if let selectedCommit = selectedCommit {
+                    UntestedCommitDetailView(
+                        commit: selectedCommit,
+                        isRunning: testRunner.isRunning,
+                        onRunTests: {
+                            runTests(for: selectedCommit)
+                        }
+                    )
                 } else {
                     VStack {
-                        Text("Select a test run to view details")
+                        Text(selectedSidebarTab == .graph ? "Select a commit to view details" : "Select a test run to view details")
                             .foregroundColor(.secondary)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -257,6 +257,69 @@ struct TestHistoryView: View {
             stopModifierKeyMonitoring()
         }
     }
+
+    private var sidebar: some View {
+        VStack(spacing: 0) {
+            Picker("", selection: selectedSidebarTabBinding) {
+                ForEach(TestHistorySidebarTab.allCases, id: \.self) { tab in
+                    Text(tab.rawValue).tag(tab)
+                }
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal, 12)
+            .padding(.top, 12)
+            .padding(.bottom, 8)
+
+            Divider()
+
+            switch selectedSidebarTab {
+            case .runs:
+                runsSidebar
+            case .graph:
+                TestGraphSidebarView(
+                    testResultStore: testResultStore,
+                    testRunner: testRunner,
+                    selectedCommit: $selectedCommit,
+                    selectedTestRun: $selectedTestRun
+                )
+            }
+        }
+    }
+
+    private var runsSidebar: some View {
+        VStack(spacing: 0) {
+            List(sidebarTestRuns, selection: $selectedTestRun) { testRun in
+                TestRunRow(
+                    testRun: testRun,
+                    isCurrentRun: testRunner.currentTestRun?.id == testRun.id,
+                    onDelete: {
+                        deleteTestRun(testRun)
+                    }
+                )
+                .tag(testRun)
+            }
+            .listStyle(.sidebar)
+            .scrollContentBackground(.hidden)
+            .background(.thinMaterial)
+            .onChange(of: selectedTestRun) { _, newValue in
+                if newValue != nil {
+                    selectedCommit = nil
+                }
+            }
+
+            Divider()
+
+            HStack {
+                Button(action: clearHistory) {
+                    Text("Clear All")
+                }
+                .buttonStyle(.bordered)
+                Spacer()
+            }
+            .padding()
+            .background(.thinMaterial)
+        }
+    }
     
     private func deleteTestRun(_ testRun: TestRun) {
         if testRunner.isRunning,
@@ -282,6 +345,7 @@ struct TestHistoryView: View {
         if alert.runModal() == .alertSecondButtonReturn {
             testResultStore.clearAll()
             selectedTestRun = nil
+            selectedCommit = nil
         }
     }
     
@@ -304,6 +368,10 @@ struct TestHistoryView: View {
         } else {
             NotificationCenter.default.post(name: NSNotification.Name("RunTests"), object: nil)
         }
+    }
+
+    private func runTests(for commit: GitCommitNode) {
+        testRunner.runTests(branchName: commit.sha, isManualRun: true)
     }
 
     private func updateRunTestsModifierState(with modifierFlags: NSEvent.ModifierFlags? = nil) {
@@ -343,6 +411,81 @@ struct TestHistoryView: View {
         }
 
         runTestsInModifierActive = false
+    }
+}
+
+private struct UntestedCommitDetailView: View {
+    let commit: GitCommitNode
+    let isRunning: Bool
+    let onRunTests: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 12) {
+                    Image(systemName: "circle")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundColor(.secondary)
+
+                    Text("No tests recorded")
+                        .font(.system(size: 18, weight: .semibold))
+
+                    Spacer()
+                }
+
+                Text(commit.subject)
+                    .font(.system(size: 15, weight: .medium))
+                    .lineLimit(3)
+
+                HStack(spacing: 12) {
+                    Text("Commit: \(commit.sha)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .textSelection(.enabled)
+
+                    if let authorDate = commit.authorDate {
+                        Text(authorDate.formatted(date: .complete, time: .shortened))
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+
+                if !commit.branchNames.isEmpty {
+                    HStack(spacing: 6) {
+                        ForEach(commit.branchNames, id: \.self) { branchName in
+                            Text(branchName)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Color.secondary.opacity(0.1))
+                                .cornerRadius(4)
+                        }
+                    }
+                }
+            }
+            .padding()
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Divider()
+
+            VStack(spacing: 8) {
+                Spacer()
+                Text("This commit has not been matched with a saved test run.")
+                    .foregroundColor(.secondary)
+                Text("Run tests for this commit or branch to populate its result in the project graph.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Button(action: onRunTests) {
+                    Text(isRunning ? "Queue Tests" : "Run Tests")
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .padding(.top, 8)
+                Spacer()
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
     }
 }
 
