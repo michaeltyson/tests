@@ -291,7 +291,7 @@ final class GitHistoryServiceTests: XCTestCase {
         XCTAssertEqual(nodes[1].branchNames, [])
     }
 
-    func testMakeCommitNodesSortsNewestCommitsFirst() {
+    func testMakeCommitNodesPreservesGitLogOrder() {
         let commits = [
             GitLogCommit(
                 sha: "old",
@@ -313,7 +313,7 @@ final class GitHistoryServiceTests: XCTestCase {
 
         let nodes = GitHistoryService.makeCommitNodes(from: commits, testRunsByCommitSHA: [:])
 
-        XCTAssertEqual(nodes.map(\.sha), ["new", "old"])
+        XCTAssertEqual(nodes.map(\.sha), ["old", "new"])
     }
 
     func testMakeCommitNodesRepresentsJoinAcrossTopLanes() {

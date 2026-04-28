@@ -36,9 +36,9 @@ final class GitHistoryService {
 
         var arguments = [
             "log",
-            "--first-parent",
+            "--date-order",
             "--date=iso-strict",
-            "--pretty=format:%H%x09%h%x09%aI%x09%D%x09%P%x09%s",
+            "--pretty=format:%H%x09%h%x09%cI%x09%D%x09%P%x09%s",
             "-n",
             "\(maximumCommitCount)"
         ]
@@ -341,18 +341,7 @@ final class GitHistoryService {
         visibleBranchNames: Set<String>? = nil,
         branchHeadsByName: [String: String]? = nil
     ) -> [GitCommitNode] {
-        let sortedCommits = commits.sorted { lhs, rhs in
-            switch (lhs.authorDate, rhs.authorDate) {
-            case let (lhsDate?, rhsDate?):
-                return lhsDate > rhsDate
-            case (_?, nil):
-                return true
-            case (nil, _?):
-                return false
-            case (nil, nil):
-                return false
-            }
-        }
+        let sortedCommits = commits
         let visibleCommitSHAs = Set(sortedCommits.map(\.sha))
         var activeLanes: [String] = []
 
