@@ -91,7 +91,7 @@ struct SettingsView: View {
                     title: "Tune Automation"
                 ) {
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("Comma-separated branch prefixes are ignored for incoming post-hook triggers. Manual runs are still allowed.")
+                        Text("Comma-separated branch prefixes are ignored for incoming automatic hook triggers. Manual runs are still allowed.")
                             .font(.system(size: 12))
                             .foregroundColor(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -400,7 +400,7 @@ struct SettingsView: View {
 
     private var postHookInstaller: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Install the bundled git post-commit hook to trigger tests automatically after commits on this repository.")
+            Text("Install the bundled git hooks to trigger tests automatically after commits and merges on this repository.")
                 .font(.system(size: 12))
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -412,12 +412,12 @@ struct SettingsView: View {
                     }
                     .buttonStyle(SettingsSubtleActionButtonStyle())
                 } else if postHookState.canWrap {
-                    Button("Wrap Existing Hook") {
+                    Button("Wrap Existing Hooks") {
                         wrapExistingPostHook()
                     }
                     .buttonStyle(SettingsSubtleActionButtonStyle())
                 } else {
-                    Button("Install Post-Hook Script") {
+                    Button("Install Auto-Trigger Hooks") {
                         installPostHook()
                     }
                     .buttonStyle(SettingsSubtleActionButtonStyle())
