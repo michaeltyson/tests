@@ -170,20 +170,6 @@ struct SettingsView: View {
                         .stroke(Color.primary.opacity(0.06), lineWidth: 1)
                 )
 
-                HStack {
-                    Spacer()
-                    Button("Cancel") {
-                        NSApp.sendAction(#selector(NSWindow.close), to: nil, from: nil)
-                    }
-                    .controlSize(.large)
-
-                    Button("Save") {
-                        saveSettings()
-                        NSApp.sendAction(#selector(NSWindow.close), to: nil, from: nil)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
-                }
             }
             .padding(.horizontal, 24)
             .padding(.top, 24)
@@ -204,12 +190,32 @@ struct SettingsView: View {
             refreshPostHookState()
         }
         .onChange(of: repositoryPath) { _, _ in
+            settings.setRepositoryPath(repositoryPath)
             inferProjectSettingsIfPossible()
             refreshBranchOptions()
             refreshPostHookState()
         }
         .onChange(of: workspaceName) { _, _ in
+            settings.setWorkspaceName(workspaceName)
             refreshSchemeOptions()
+        }
+        .onChange(of: xcodeSchemeName) { _, _ in
+            settings.setXcodeSchemeName(xcodeSchemeName)
+        }
+        .onChange(of: branchName) { _, _ in
+            settings.setBranchName(branchName.isEmpty ? nil : branchName)
+        }
+        .onChange(of: ignoredAutomaticBranchPrefixes) { _, _ in
+            settings.setIgnoredAutomaticBranchPrefixes(ignoredAutomaticBranchPrefixes)
+        }
+        .onChange(of: parallelTestingEnabled) { _, _ in
+            settings.setParallelTestingEnabled(parallelTestingEnabled)
+        }
+        .onChange(of: parallelBuildJobCount) { _, _ in
+            settings.setParallelBuildJobCount(parallelBuildJobCount)
+        }
+        .onChange(of: preBuildScript) { _, _ in
+            settings.setPreBuildScript(preBuildScript)
         }
     }
     
@@ -249,7 +255,11 @@ struct SettingsView: View {
         let schemeWorkspaceName = workspaceName.isEmpty ? inferredWorkspaceName : workspaceName
         schemeOptions = WorkspaceFinder.findSchemeNames(in: repositoryURL, preferredWorkspaceName: schemeWorkspaceName)
         let inferredSchemeName = schemeOptions.first ?? ""
-        if force || shouldReplaceInferredSchemeName(xcodeSchemeName, with: inferredSchemeName) {
+        if SettingsStore.shouldReplaceConfiguredSchemeName(
+            xcodeSchemeName,
+            with: inferredSchemeName,
+            availableSchemeNames: schemeOptions
+        ) {
             xcodeSchemeName = inferredSchemeName
         }
     }
@@ -354,34 +364,6 @@ struct SettingsView: View {
             postHookState = .installFailed(error.localizedDescription)
             postHookMessage = error.localizedDescription
         }
-    }
-
-    private func shouldReplaceInferredSchemeName(_ schemeName: String, with inferredSchemeName: String) -> Bool {
-        let lowercasedSchemeName = schemeName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let lowercasedInferredSchemeName = inferredSchemeName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if WorkspaceFinder.isTestSchemeName(lowercasedInferredSchemeName),
-           !WorkspaceFinder.isTestSchemeName(lowercasedSchemeName) {
-            return true
-        }
-
-        return lowercasedSchemeName.isEmpty ||
-        [
-            "all",
-            "aggregate",
-            "build all",
-            "everything"
-        ].contains(lowercasedSchemeName)
-    }
-    
-    private func saveSettings() {
-        settings.setRepositoryPath(repositoryPath)
-        settings.setWorkspaceName(workspaceName)
-        settings.setXcodeSchemeName(xcodeSchemeName)
-        settings.setBranchName(branchName.isEmpty ? nil : branchName)
-        settings.setIgnoredAutomaticBranchPrefixes(ignoredAutomaticBranchPrefixes)
-        settings.setParallelTestingEnabled(parallelTestingEnabled)
-        settings.setParallelBuildJobCount(parallelBuildJobCount)
-        settings.setPreBuildScript(preBuildScript)
     }
 
     private var header: some View {
@@ -639,6 +621,11 @@ struct EditableComboBox: NSViewRepresentable {
         }
 
         func controlTextDidChange(_ notification: Notification) {
+            guard let comboBox = notification.object as? NSComboBox else { return }
+            text.wrappedValue = comboBox.stringValue
+        }
+
+        func controlTextDidEndEditing(_ notification: Notification) {
             guard let comboBox = notification.object as? NSComboBox else { return }
             text.wrappedValue = comboBox.stringValue
         }
