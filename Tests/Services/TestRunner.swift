@@ -316,11 +316,17 @@ class TestRunner: ObservableObject {
             
             print("TestRunner: Found workspace: \(workspaceURL.path)")
 
+            let preferredWorkspaceName = workspaceURL.deletingPathExtension().lastPathComponent
             let configuredSchemeName = settings.xcodeSchemeName.trimmingCharacters(in: .whitespacesAndNewlines)
-            let schemeName = configuredSchemeName.isEmpty
-                ? WorkspaceFinder.findSchemeName(in: branchWorkspace, preferredWorkspaceName: workspaceURL.deletingPathExtension().lastPathComponent)
-                : configuredSchemeName
-            guard let schemeName, !schemeName.isEmpty else {
+            let availableSchemes = WorkspaceFinder.findSchemeInfos(
+                in: branchWorkspace,
+                preferredWorkspaceName: preferredWorkspaceName
+            )
+            let schemeInfo = self.resolvedSchemeInfo(
+                configuredSchemeName: configuredSchemeName,
+                availableSchemes: availableSchemes
+            )
+            guard let schemeInfo else {
                 print("TestRunner: ERROR - Could not infer Xcode scheme")
                 self.abortRun(removeCurrentRun: true)
                 self.showError(
@@ -328,6 +334,20 @@ class TestRunner: ObservableObject {
                     message: "Could not infer an Xcode scheme from the repository. Please choose a scheme in Settings."
                 )
                 return
+            }
+            let schemeName = schemeInfo.name
+
+            if !configuredSchemeName.isEmpty, configuredSchemeName != schemeName {
+                DispatchQueue.main.async {
+                    self.output += "Configured scheme '\(configuredSchemeName)' was not found. Using '\(schemeName)' instead.\n"
+                }
+            }
+
+            DispatchQueue.main.async {
+                let testableSummary = schemeInfo.testableNames.isEmpty
+                    ? "no discovered testables"
+                    : "\(schemeInfo.testableReferenceCount) discovered testables: \(schemeInfo.testableNames.joined(separator: ", "))"
+                self.output += "Using workspace '\(workspaceURL.lastPathComponent)' with scheme '\(schemeName)' (\(testableSummary)).\n"
             }
 
             if self.shouldStopBeforeLaunchingProcess() { return }
@@ -360,7 +380,7 @@ class TestRunner: ObservableObject {
                 print("TestRunner: Starting xcodebuild build+test pipeline...")
                 self.runXcodebuildTests(
                     workspaceURL: workspaceURL,
-                    schemeName: schemeName,
+                    schemeInfo: schemeInfo,
                     branchName: branchToUse,
                     workspaceDirectory: branchWorkspace
                 )
@@ -920,8 +940,25 @@ class TestRunner: ObservableObject {
         let sha = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
         return sha.isEmpty ? nil : sha
     }
-    
-    private func runXcodebuildTests(workspaceURL: URL, schemeName: String, branchName: String, workspaceDirectory: URL) {
+
+    private func resolvedSchemeInfo(
+        configuredSchemeName: String,
+        availableSchemes: [WorkspaceFinder.SchemeInfo]
+    ) -> WorkspaceFinder.SchemeInfo? {
+        if !configuredSchemeName.isEmpty,
+           let configuredScheme = availableSchemes.first(where: { $0.name == configuredSchemeName }) {
+            return configuredScheme
+        }
+
+        return availableSchemes.first
+    }
+
+    private func runXcodebuildTests(
+        workspaceURL: URL,
+        schemeInfo: WorkspaceFinder.SchemeInfo,
+        branchName: String,
+        workspaceDirectory: URL
+    ) {
         if isCancelled {
             print("TestRunner: Run was canceled before xcodebuild launch")
             isCancelled = false
@@ -929,12 +966,19 @@ class TestRunner: ObservableObject {
             return
         }
 
+        let schemeName = schemeInfo.name
+
         // isRunning and output are already set in runTests()
         if currentTestRun == nil {
             var testRun = TestRun(status: .running)
             testRun.totalCount = totalCount > 0 ? totalCount : nil
             testRun.branchName = branchName
             testRun.commitSHA = currentCommitSHASync(in: workspaceDirectory)
+            testRun.selectedWorkspaceName = workspaceURL.lastPathComponent
+            testRun.selectedWorkspacePath = workspaceURL.path
+            testRun.selectedSchemeName = schemeName
+            testRun.discoveredTestableNames = schemeInfo.testableNames
+            testRun.discoveredTestableCount = schemeInfo.testableReferenceCount
             currentTestRun = testRun
             sendTestStartNotification(branchName: branchName)
         }

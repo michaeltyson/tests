@@ -441,7 +441,7 @@ final class TestRunnerQueueTests: XCTestCase {
         )
     }
 
-    func testWorkspaceFinderPrefersFocusedTestSchemeOverProductSchemeWithMoreTestables() throws {
+    func testWorkspaceFinderPrefersBroadWorkspaceSchemeOverFocusedTestSchemeWithFewerTestables() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer {
@@ -493,7 +493,75 @@ final class TestRunnerQueueTests: XCTestCase {
 
         XCTAssertEqual(
             WorkspaceFinder.findSchemeName(in: root, preferredWorkspaceName: "Example Pro.xcworkspace"),
-            "Example Tests macOS"
+            "Example Pro (macOS)"
+        )
+    }
+
+    func testWorkspaceFinderSelectsAggregateMacOSSchemeOverNarrowTestsScheme() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        let schemesDirectory = root
+            .appendingPathComponent("Example Pro.xcodeproj", isDirectory: true)
+            .appendingPathComponent("xcshareddata", isDirectory: true)
+            .appendingPathComponent("xcschemes", isDirectory: true)
+        try FileManager.default.createDirectory(at: schemesDirectory, withIntermediateDirectories: true)
+
+        try schemeContents(testableNames: ["Example Tests macOS"]).write(
+            to: schemesDirectory.appendingPathComponent("Example Tests macOS.xcscheme"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try schemeContents(
+            testableNames: [
+                "Example Tests macOS",
+                "History Tests macOS",
+                "Rendering Tests macOS",
+                "Audio Engine Tests macOS",
+                "Database Tests macOS",
+                "Common Tests macOS"
+            ]
+        ).write(
+            to: schemesDirectory.appendingPathComponent("Example Pro (macOS).xcscheme"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let schemeInfo = try XCTUnwrap(
+            WorkspaceFinder.findSchemeInfos(in: root, preferredWorkspaceName: "Example Pro.xcworkspace").first
+        )
+        XCTAssertEqual(schemeInfo.name, "Example Pro (macOS)")
+        XCTAssertEqual(schemeInfo.testableReferenceCount, 6)
+        XCTAssertTrue(schemeInfo.testableNames.contains("History Tests macOS"))
+    }
+
+    func testSettingsInferenceDoesNotReplaceConfiguredBroadSchemeWithInferredNarrowTestScheme() {
+        XCTAssertFalse(
+            SettingsStore.shouldReplaceConfiguredSchemeName(
+                "Example Pro (macOS)",
+                with: "Example Tests macOS",
+                availableSchemeNames: ["Example Tests macOS", "Example Pro (macOS)"]
+            )
+        )
+    }
+
+    func testSettingsInferenceReplacesEmptyOrInvalidConfiguredScheme() {
+        XCTAssertTrue(
+            SettingsStore.shouldReplaceConfiguredSchemeName(
+                "",
+                with: "Example Pro (macOS)",
+                availableSchemeNames: ["Example Pro (macOS)"]
+            )
+        )
+        XCTAssertTrue(
+            SettingsStore.shouldReplaceConfiguredSchemeName(
+                "Missing Scheme",
+                with: "Example Pro (macOS)",
+                availableSchemeNames: ["Example Pro (macOS)"]
+            )
         )
     }
 
@@ -809,5 +877,26 @@ final class TestRunnerQueueTests: XCTestCase {
             )
         }
         return output
+    }
+
+    private func schemeContents(testableNames: [String]) -> String {
+        let testables = testableNames.map { name in
+            """
+                  <TestableReference>
+                    <BuildableReference
+                       BlueprintName = "\(name)" />
+                  </TestableReference>
+            """
+        }.joined(separator: "\n")
+
+        return """
+        <Scheme>
+          <TestAction>
+            <Testables>
+        \(testables)
+            </Testables>
+          </TestAction>
+        </Scheme>
+        """
     }
 }

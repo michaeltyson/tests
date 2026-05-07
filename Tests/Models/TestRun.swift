@@ -30,6 +30,11 @@ struct TestRun: Identifiable, Codable, Hashable {
     var totalCount: Int?
     var branchName: String?
     var commitSHA: String?
+    var selectedWorkspaceName: String?
+    var selectedWorkspacePath: String?
+    var selectedSchemeName: String?
+    var discoveredTestableNames: [String]?
+    var discoveredTestableCount: Int?
     
     init(id: UUID = UUID(), timestamp: Date = Date(), status: TestRunStatus = .running) {
         self.id = id
