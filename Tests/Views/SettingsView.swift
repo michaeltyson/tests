@@ -617,22 +617,40 @@ struct EditableComboBox: NSViewRepresentable {
         }
 
         @objc func comboBoxAction(_ sender: NSComboBox) {
-            text.wrappedValue = sender.stringValue
+            commitValue(from: sender)
         }
 
         func controlTextDidChange(_ notification: Notification) {
             guard let comboBox = notification.object as? NSComboBox else { return }
-            text.wrappedValue = comboBox.stringValue
+            commitValue(from: comboBox)
         }
 
         func controlTextDidEndEditing(_ notification: Notification) {
             guard let comboBox = notification.object as? NSComboBox else { return }
-            text.wrappedValue = comboBox.stringValue
+            commitValue(from: comboBox)
         }
 
         func comboBoxSelectionDidChange(_ notification: Notification) {
             guard let comboBox = notification.object as? NSComboBox else { return }
-            text.wrappedValue = comboBox.stringValue
+            commitValue(from: comboBox)
+        }
+
+        func comboBoxSelectionIsChanging(_ notification: Notification) {
+            guard let comboBox = notification.object as? NSComboBox else { return }
+            commitValue(from: comboBox)
+        }
+
+        private func commitValue(from comboBox: NSComboBox) {
+            text.wrappedValue = Self.committedValue(from: comboBox)
+        }
+
+        static func committedValue(from comboBox: NSComboBox) -> String {
+            if comboBox.indexOfSelectedItem >= 0,
+               let selectedValue = comboBox.objectValueOfSelectedItem as? String {
+                return selectedValue
+            }
+
+            return comboBox.stringValue
         }
     }
 }
