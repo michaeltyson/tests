@@ -192,6 +192,33 @@ class SettingsStore: ObservableObject {
         let prefixes = parsedIgnoredAutomaticBranchPrefixes(from: existingPrefixesText) + [prefix]
         return normalizedIgnoredAutomaticBranchPrefixes(prefixes.joined(separator: ","))
     }
+
+    static func shouldReplaceConfiguredSchemeName(
+        _ schemeName: String,
+        with inferredSchemeName: String,
+        availableSchemeNames: [String]
+    ) -> Bool {
+        let trimmedSchemeName = schemeName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedInferredSchemeName = inferredSchemeName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedInferredSchemeName.isEmpty else {
+            return false
+        }
+        guard !trimmedSchemeName.isEmpty else {
+            return true
+        }
+
+        if !availableSchemeNames.isEmpty, !availableSchemeNames.contains(trimmedSchemeName) {
+            return true
+        }
+
+        let lowercasedSchemeName = trimmedSchemeName.lowercased()
+        return [
+            "all",
+            "aggregate",
+            "build all",
+            "everything"
+        ].contains(lowercasedSchemeName)
+    }
     
     var isConfigured: Bool {
         !repositoryPath.isEmpty
