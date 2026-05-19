@@ -211,6 +211,93 @@ final class TestRunnerQueueTests: XCTestCase {
         )
     }
 
+    func testCrashReportSummaryParsingIncludesExceptionAndCrashedThread() throws {
+        let ips = """
+        {"app_name":"xctest","timestamp":"2026-05-19 09:57:32.00 +1000","name":"xctest"}
+        {
+          "faultingThread" : 0,
+          "vmRegionInfo" : "0xbbb563900 is in 0xbbb400000-0xbbb800000; bytes after start: 1456384",
+          "exception" : {
+            "codes" : "0x0000000000000001, 0x0003000bbb563900",
+            "type" : "EXC_BAD_ACCESS",
+            "signal" : "SIGSEGV",
+            "subtype" : "KERN_INVALID_ADDRESS at 0x0003000bbb563900"
+          },
+          "termination" : {
+            "code" : 11,
+            "namespace" : "SIGNAL",
+            "indicator" : "Segmentation fault: 11",
+            "byProc" : "exc handler",
+            "byPid" : 2812
+          },
+          "threads" : [
+            {
+              "triggered" : true,
+              "queue" : "com.apple.main-thread",
+              "frames" : [
+                {
+                  "imageOffset" : 50387630336,
+                  "imageIndex" : 1
+                },
+                {
+                  "symbol" : "Steinberg::IPtr<Steinberg::Vst::IEditController>::~IPtr()",
+                  "inline" : true,
+                  "imageIndex" : 0,
+                  "imageOffset" : 11333848,
+                  "symbolLocation" : 20,
+                  "sourceLine" : 152,
+                  "sourceFile" : "smartpointer.h"
+                }
+              ]
+            }
+          ],
+          "usedImages" : [
+            {
+              "base" : 4549853184,
+              "name" : "Loopy Tests macOS"
+            },
+            {
+              "name" : "???"
+            }
+          ]
+        }
+        """
+
+        let summary = try XCTUnwrap(
+            TestRunner.parseCrashReportSummary(
+                from: Data(ips.utf8),
+                reportPath: "/Users/michael/Library/Logs/DiagnosticReports/xctest-2026-05-19-095732.ips"
+            )
+        )
+
+        XCTAssertEqual(summary.reportPath, "/Users/michael/Library/Logs/DiagnosticReports/xctest-2026-05-19-095732.ips")
+        XCTAssertTrue(summary.lines.contains("Triggered by Thread: 0, Dispatch Queue: com.apple.main-thread"))
+        XCTAssertTrue(summary.lines.contains("Exception Type:    EXC_BAD_ACCESS (SIGSEGV)"))
+        XCTAssertTrue(summary.lines.contains("Exception Subtype: KERN_INVALID_ADDRESS at 0x0003000bbb563900"))
+        XCTAssertTrue(summary.lines.contains("Exception Codes:   0x0000000000000001, 0x0003000bbb563900"))
+        XCTAssertTrue(summary.lines.contains("Termination Reason:  Namespace SIGNAL, Code 11, Segmentation fault: 11"))
+        XCTAssertTrue(summary.lines.contains("Terminating Process: exc handler [2812]"))
+        XCTAssertTrue(summary.lines.contains("VM Region Info: 0xbbb563900 is in 0xbbb400000-0xbbb800000; bytes after start: 1456384"))
+        XCTAssertTrue(summary.lines.contains("Thread 0 Crashed::  Dispatch queue: com.apple.main-thread"))
+        XCTAssertTrue(
+            summary.lines.contains {
+                $0.contains("Loopy Tests macOS")
+                    && $0.contains("Steinberg::IPtr<Steinberg::Vst::IEditController>::~IPtr() + 20")
+                    && $0.contains("(smartpointer.h:152) [inlined]")
+            }
+        )
+    }
+
+    func testTestRunStartDateParsingReadsXCResultTimestamp() throws {
+        let date = try XCTUnwrap(
+            TestRunner.testRunStartDate(
+                fromResultBundleName: "Test-Loopy Pro (macOS)-2026.05.19_09-56-21-+1000.xcresult"
+            )
+        )
+
+        XCTAssertEqual(date.timeIntervalSince1970, 1_779_148_581)
+    }
+
     func testProjectParallelizationSettingReadsYes() {
         let contents = """
         attributes = {
@@ -231,12 +318,12 @@ final class TestRunnerQueueTests: XCTestCase {
         XCTAssertEqual(TestRunner.projectParallelizationSetting(from: contents), false)
     }
 
-    func testWorkspaceBuildArtifactDirectoryUsesLocalDerivedDataFolder() {
-        let workspaceURL = URL(fileURLWithPath: "/tmp/ExampleWorkspace", isDirectory: true)
+    func testWorkspaceBuildArtifactDirectoryUsesTempRootDerivedDataFolder() {
+        let workspaceURL = URL(fileURLWithPath: "/tmp/TempWorkspace/workspace", isDirectory: true)
 
         XCTAssertEqual(
             TestRunner.workspaceBuildArtifactDirectory(in: workspaceURL).path,
-            "/tmp/ExampleWorkspace/.DerivedData"
+            "/tmp/TempWorkspace/DerivedData"
         )
     }
 

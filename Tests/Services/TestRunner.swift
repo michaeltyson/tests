@@ -60,6 +60,7 @@ class TestRunner: ObservableObject {
     private static let lastPreparedWorkspaceRefKey = "com.atastypixel.Tests.lastPreparedWorkspaceRef"
     private static let defaultWatchdogCheckInterval: TimeInterval = 15
     private static let testInactivityTimeoutInterval: TimeInterval = 10 * 60
+    private static let crashReportWaitTimeout: TimeInterval = 10
     static let sourceRemoteTrackingFetchRefspec = "+refs/remotes/origin/*:refs/remotes/source-origin/*"
 
     private struct PendingRunRequest {
@@ -80,6 +81,11 @@ class TestRunner: ObservableObject {
     struct XCResultFailureSummary: Equatable {
         let identifier: String
         let messages: [String]
+    }
+
+    struct CrashReportSummary: Equatable {
+        let reportPath: String
+        let lines: [String]
     }
 
     enum RunDispatchAction: Equatable {
@@ -888,6 +894,25 @@ class TestRunner: ObservableObject {
             }
         }
 
+        let artifactURL = workspaceBuildArtifactDirectory(in: directory)
+        guard fileManager.fileExists(atPath: artifactURL.path) else {
+            return true
+        }
+
+        do {
+            try fileManager.removeItem(at: artifactURL)
+            print("TestRunner: Removed stale build artifact directory: \(artifactURL.path)")
+            DispatchQueue.main.async { [weak self] in
+                self?.output += "Removed stale build artifact directory '\(artifactURL.lastPathComponent)'.\n"
+            }
+        } catch {
+            print("TestRunner: Failed to remove build artifact directory \(artifactURL.path): \(error)")
+            DispatchQueue.main.async { [weak self] in
+                self?.output += "Error: Failed to remove build artifact directory '\(artifactURL.lastPathComponent)': \(error.localizedDescription)\n"
+            }
+            return false
+        }
+
         return true
     }
 
@@ -1492,6 +1517,13 @@ class TestRunner: ObservableObject {
             """
         }
 
+        let crashReportSummary: CrashReportSummary?
+        if failures.contains(where: Self.isCrashedTestFailure) {
+            crashReportSummary = latestXCTestCrashReportSummary(near: resultBundleURL)
+        } else {
+            crashReportSummary = nil
+        }
+
         var lines = ["Test failure summary from \(resultBundleURL.lastPathComponent):"]
         if failures.isEmpty {
             lines.append("  No failed test cases were found in the xcresult test report.")
@@ -1507,6 +1539,11 @@ class TestRunner: ObservableObject {
             if lines.last?.isEmpty == true {
                 lines.removeLast()
             }
+        }
+        if let crashReportSummary {
+            lines.append("")
+            lines.append("Crash report: \(crashReportSummary.reportPath)")
+            lines.append(contentsOf: crashReportSummary.lines)
         }
         lines.append("Result bundle: \(resultBundleURL.path)")
         return lines.joined(separator: "\n")
@@ -1638,6 +1675,235 @@ class TestRunner: ObservableObject {
         }
         if let lineNumber {
             return "line \(lineNumber)"
+        }
+        return nil
+    }
+
+    private static func isCrashedTestFailure(_ failure: XCResultFailureSummary) -> Bool {
+        failure.messages.contains { message in
+            message.localizedCaseInsensitiveContains("test crashed")
+                || message.localizedCaseInsensitiveContains("crashed with signal")
+        }
+    }
+
+    private func latestXCTestCrashReportSummary(
+        near resultBundleURL: URL,
+        timeout: TimeInterval = TestRunner.crashReportWaitTimeout
+    ) -> CrashReportSummary? {
+        let deadline = Date().addingTimeInterval(timeout)
+
+        repeat {
+            if let summary = latestAvailableXCTestCrashReportSummary(near: resultBundleURL) {
+                return summary
+            }
+
+            let remaining = deadline.timeIntervalSinceNow
+            guard remaining > 0 else {
+                return nil
+            }
+            Thread.sleep(forTimeInterval: min(0.25, remaining))
+        } while true
+    }
+
+    private func latestAvailableXCTestCrashReportSummary(near resultBundleURL: URL) -> CrashReportSummary? {
+        guard let diagnosticReportsURL = fileManager.urls(for: .libraryDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("Logs", isDirectory: true)
+            .appendingPathComponent("DiagnosticReports", isDirectory: true)
+        else {
+            return nil
+        }
+
+        let runStartDate = Self.testRunStartDate(fromResultBundleName: resultBundleURL.lastPathComponent)
+        let referenceDate = (try? resultBundleURL.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)
+        guard let reportURLs = try? fileManager.contentsOfDirectory(
+            at: diagnosticReportsURL,
+            includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return nil
+        }
+
+        let nearbyReportURLs = reportURLs
+            .filter { url in
+                url.lastPathComponent.hasPrefix("xctest-") && url.pathExtension == "ips"
+            }
+            .compactMap { url -> (url: URL, modifiedAt: Date)? in
+                let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .isRegularFileKey])
+                guard values?.isRegularFile != false else {
+                    return nil
+                }
+                let modifiedAt = values?.contentModificationDate ?? .distantPast
+                return (url, modifiedAt)
+            }
+            .filter { candidate in
+                if let runStartDate {
+                    return candidate.modifiedAt >= runStartDate.addingTimeInterval(-30)
+                }
+                guard let referenceDate else {
+                    return true
+                }
+                return abs(candidate.modifiedAt.timeIntervalSince(referenceDate)) <= 20 * 60
+            }
+            .sorted { $0.modifiedAt > $1.modifiedAt }
+
+        for candidate in nearbyReportURLs {
+            guard
+                let data = try? Data(contentsOf: candidate.url),
+                let summary = Self.parseCrashReportSummary(from: data, reportPath: candidate.url.path)
+            else {
+                continue
+            }
+            return summary
+        }
+
+        return nil
+    }
+
+    static func testRunStartDate(fromResultBundleName name: String) -> Date? {
+        let pattern = #"\d{4}\.\d{2}\.\d{2}_\d{2}-\d{2}-\d{2}-[+-]\d{4}"#
+        guard
+            let regex = try? NSRegularExpression(pattern: pattern),
+            let match = regex.firstMatch(in: name, range: NSRange(name.startIndex..., in: name)),
+            let range = Range(match.range, in: name)
+        else {
+            return nil
+        }
+
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy.MM.dd_HH-mm-ss-Z"
+        return formatter.date(from: String(name[range]))
+    }
+
+    static func parseCrashReportSummary(from data: Data, reportPath: String = "") -> CrashReportSummary? {
+        guard let text = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+
+        let jsonText: String
+        if let firstNewline = text.firstIndex(of: "\n") {
+            jsonText = String(text[text.index(after: firstNewline)...])
+        } else {
+            jsonText = text
+        }
+
+        guard
+            let jsonData = jsonText.data(using: .utf8),
+            let root = (try? JSONSerialization.jsonObject(with: jsonData)) as? [String: Any]
+        else {
+            return nil
+        }
+
+        let faultingThreadIndex = (root["faultingThread"] as? Int)
+            ?? Int((root["faultingThread"] as? String) ?? "")
+        let threads = root["threads"] as? [[String: Any]] ?? []
+        guard let crashedThreadIndex = faultingThreadIndex ?? threads.firstIndex(where: { ($0["triggered"] as? Bool) == true }) else {
+            return nil
+        }
+
+        let crashedThread = crashedThreadIndex < threads.count ? threads[crashedThreadIndex] : [:]
+        let queueName = (crashedThread["queue"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let images = root["usedImages"] as? [[String: Any]] ?? []
+        let exception = root["exception"] as? [String: Any]
+        let termination = root["termination"] as? [String: Any]
+
+        var lines: [String] = []
+        if let queueName, !queueName.isEmpty {
+            lines.append("Triggered by Thread: \(crashedThreadIndex), Dispatch Queue: \(queueName)")
+        } else {
+            lines.append("Triggered by Thread: \(crashedThreadIndex)")
+        }
+        lines.append("")
+
+        if let exceptionType = trimmedString(exception?["type"]) {
+            let signal = trimmedString(exception?["signal"]).map { " (\($0))" } ?? ""
+            lines.append("Exception Type:    \(exceptionType)\(signal)")
+        }
+        if let exceptionSubtype = trimmedString(exception?["subtype"]) {
+            lines.append("Exception Subtype: \(exceptionSubtype)")
+        }
+        if let exceptionCodes = trimmedString(exception?["codes"]) {
+            lines.append("Exception Codes:   \(exceptionCodes)")
+        }
+
+        if lines.last?.isEmpty == false {
+            lines.append("")
+        }
+
+        if let terminationNamespace = trimmedString(termination?["namespace"]),
+           let terminationCode = integerString(termination?["code"]) {
+            let indicator = trimmedString(termination?["indicator"]).map { ", \($0)" } ?? ""
+            lines.append("Termination Reason:  Namespace \(terminationNamespace), Code \(terminationCode)\(indicator)")
+        }
+        if let terminatingProcess = trimmedString(termination?["byProc"]) {
+            let pid = integerString(termination?["byPid"]).map { " [\($0)]" } ?? ""
+            lines.append("Terminating Process: \(terminatingProcess)\(pid)")
+        }
+
+        if let vmRegionInfo = trimmedString(root["vmRegionInfo"]) ?? trimmedString(root["vmregioninfo"]) {
+            lines.append("")
+            lines.append("VM Region Info: \(vmRegionInfo)")
+        }
+
+        lines.append("")
+        if let queueName, !queueName.isEmpty {
+            lines.append("Thread \(crashedThreadIndex) Crashed::  Dispatch queue: \(queueName)")
+        } else {
+            lines.append("Thread \(crashedThreadIndex) Crashed:")
+        }
+
+        let frames = crashedThread["frames"] as? [[String: Any]] ?? []
+        for (index, frame) in frames.enumerated() {
+            lines.append(formattedCrashFrame(frame, index: index, images: images))
+        }
+
+        return CrashReportSummary(reportPath: reportPath, lines: lines)
+    }
+
+    private static func formattedCrashFrame(_ frame: [String: Any], index: Int, images: [[String: Any]]) -> String {
+        let imageIndex = frame["imageIndex"] as? Int
+        let image = imageIndex.flatMap { $0 < images.count ? images[$0] : nil }
+        let imageName = trimmedString(image?["name"]) ?? "???"
+        let imageOffset = integerValue(frame["imageOffset"]) ?? 0
+        let baseAddress = integerValue(image?["base"])
+        let address = baseAddress.map { $0 + imageOffset } ?? imageOffset
+        let symbol = trimmedString(frame["symbol"]) ?? "???"
+        let symbolLocation = integerString(frame["symbolLocation"])
+        let location = symbolLocation.map { " + \($0)" } ?? ""
+        let sourceFile = trimmedString(frame["sourceFile"])
+        let sourceLine = integerString(frame["sourceLine"])
+        let source = sourceFile.map { file in
+            sourceLine.map { " (\(file):\($0))" } ?? " (\(file))"
+        } ?? ""
+        let inlined = (frame["inline"] as? Bool) == true ? " [inlined]" : ""
+
+        return "\(index)   \(imageName.padding(toLength: 30, withPad: " ", startingAt: 0))\t       0x\(String(address, radix: 16)) \(symbol)\(location)\(source)\(inlined)"
+    }
+
+    private static func trimmedString(_ value: Any?) -> String? {
+        guard let string = value as? String else {
+            return nil
+        }
+        let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private static func integerString(_ value: Any?) -> String? {
+        integerValue(value).map(String.init)
+    }
+
+    private static func integerValue(_ value: Any?) -> UInt64? {
+        if let int = value as? Int {
+            return UInt64(bitPattern: Int64(int))
+        }
+        if let uint = value as? UInt64 {
+            return uint
+        }
+        if let number = value as? NSNumber {
+            return number.uint64Value
+        }
+        if let string = value as? String {
+            return UInt64(string)
         }
         return nil
     }
@@ -2261,7 +2527,9 @@ class TestRunner: ObservableObject {
     static let workspaceBuildArtifactDirectoryNames = [".DerivedData", "DerivedData", "build"]
 
     static func workspaceBuildArtifactDirectory(in workspaceDirectory: URL) -> URL {
-        workspaceDirectory.appendingPathComponent(".DerivedData", isDirectory: true)
+        workspaceDirectory
+            .deletingLastPathComponent()
+            .appendingPathComponent("DerivedData", isDirectory: true)
     }
 
     static func shouldCleanWorkspaceForRefChange(previousRef: String?, nextRef: String) -> Bool {
