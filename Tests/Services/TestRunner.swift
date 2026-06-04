@@ -58,6 +58,7 @@ class TestRunner: ObservableObject {
     
     private static let totalCountKey = "com.atastypixel.Tests.lastTotalCount"
     private static let lastPreparedWorkspaceRefKey = "com.atastypixel.Tests.lastPreparedWorkspaceRef"
+    private static let lastPreparedWorkspaceCommitSHAKey = "com.atastypixel.Tests.lastPreparedWorkspaceCommitSHA"
     private static let defaultWatchdogCheckInterval: TimeInterval = 15
     private static let testInactivityTimeoutInterval: TimeInterval = 10 * 60
     private static let crashReportWaitTimeout: TimeInterval = 10
@@ -150,6 +151,7 @@ class TestRunner: ObservableObject {
         setupQueue.async { [weak self] in
             guard let self = self else { return }
             let previousPreparedRef = self.previouslyPreparedWorkspaceRef(in: branchWorkspace)
+            let previousPreparedCommitSHA = self.previouslyPreparedWorkspaceCommitSHA(in: branchWorkspace)
 
             if self.shouldStopBeforeLaunchingProcess() { return }
             
@@ -294,13 +296,36 @@ class TestRunner: ObservableObject {
                 return
             }
 
-            if !shouldCleanForRefChange {
+            let currentCommitSHA = self.currentCommitSHASync(in: branchWorkspace)
+            let shouldCleanForPreparedStateChange = Self.shouldCleanWorkspaceForPreparedStateChange(
+                previousRef: previousPreparedRef,
+                previousCommitSHA: previousPreparedCommitSHA,
+                nextRef: branchToUse,
+                nextCommitSHA: currentCommitSHA
+            )
+            let shouldCleanForCommitChange = !shouldCleanForRefChange && shouldCleanForPreparedStateChange
+
+            if shouldCleanForCommitChange {
+                DispatchQueue.main.async {
+                    self.output += "Commit changed under '\(branchToUse)'. Cleaning workspace build state...\n"
+                }
+                print("TestRunner: Ref \(branchToUse) resolved to a different commit; cleaning disposable workspace build state")
+                if !self.cleanWorkspaceStateSync(in: branchWorkspace) {
+                    self.abortRun(removeCurrentRun: true)
+                    self.showError(
+                        "Failed to clean workspace",
+                        message: "Could not remove stale workspace state after checking out the requested ref."
+                    )
+                    return
+                }
+            } else if !shouldCleanForRefChange {
                 DispatchQueue.main.async {
                     self.output += "Branch unchanged. Reusing existing build state...\n"
                 }
                 print("TestRunner: Branch unchanged (\(branchToUse)); reusing existing build state")
             }
             self.recordPreparedWorkspaceRef(branchToUse)
+            self.recordPreparedWorkspaceCommitSHA(currentCommitSHA)
 
             if self.shouldStopBeforeLaunchingProcess() { return }
             
@@ -948,6 +973,24 @@ class TestRunner: ObservableObject {
 
     private func recordPreparedWorkspaceRef(_ ref: String) {
         UserDefaults.standard.set(ref, forKey: Self.lastPreparedWorkspaceRefKey)
+    }
+
+    private func previouslyPreparedWorkspaceCommitSHA(in directory: URL) -> String? {
+        guard fileManager.fileExists(atPath: directory.appendingPathComponent(".git").path) else {
+            return nil
+        }
+
+        let storedCommitSHA = UserDefaults.standard.string(forKey: Self.lastPreparedWorkspaceCommitSHAKey)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return storedCommitSHA?.isEmpty == false ? storedCommitSHA : nil
+    }
+
+    private func recordPreparedWorkspaceCommitSHA(_ commitSHA: String?) {
+        if let commitSHA = commitSHA?.trimmingCharacters(in: .whitespacesAndNewlines), !commitSHA.isEmpty {
+            UserDefaults.standard.set(commitSHA, forKey: Self.lastPreparedWorkspaceCommitSHAKey)
+        } else {
+            UserDefaults.standard.removeObject(forKey: Self.lastPreparedWorkspaceCommitSHAKey)
+        }
     }
 
     private func currentCommitSHASync(in directory: URL) -> String? {
@@ -2541,6 +2584,34 @@ class TestRunner: ObservableObject {
         }
 
         return previousRef != trimmedNextRef
+    }
+
+    static func shouldCleanWorkspaceForPreparedStateChange(
+        previousRef: String?,
+        previousCommitSHA: String?,
+        nextRef: String,
+        nextCommitSHA: String?
+    ) -> Bool {
+        let trimmedNextRef = nextRef.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedNextRef.isEmpty else { return false }
+
+        guard let previousRef = previousRef?.trimmingCharacters(in: .whitespacesAndNewlines), !previousRef.isEmpty else {
+            return false
+        }
+
+        guard previousRef == trimmedNextRef else {
+            return true
+        }
+
+        guard let nextCommitSHA = nextCommitSHA?.trimmingCharacters(in: .whitespacesAndNewlines), !nextCommitSHA.isEmpty else {
+            return false
+        }
+
+        guard let previousCommitSHA = previousCommitSHA?.trimmingCharacters(in: .whitespacesAndNewlines), !previousCommitSHA.isEmpty else {
+            return true
+        }
+
+        return previousCommitSHA != nextCommitSHA
     }
 
     private func xcodebuildParallelTestingArguments(from settings: SettingsStore) -> [String] {

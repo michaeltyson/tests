@@ -680,6 +680,39 @@ final class TestRunnerQueueTests: XCTestCase {
         )
     }
 
+    func testWorkspaceCleanupTriggeredWhenCommitChangesUnderSameRef() {
+        XCTAssertTrue(
+            TestRunner.shouldCleanWorkspaceForPreparedStateChange(
+                previousRef: "develop",
+                previousCommitSHA: "1111111111111111111111111111111111111111",
+                nextRef: "develop",
+                nextCommitSHA: "2222222222222222222222222222222222222222"
+            )
+        )
+    }
+
+    func testWorkspaceCleanupSkippedWhenRefAndCommitAreUnchanged() {
+        XCTAssertFalse(
+            TestRunner.shouldCleanWorkspaceForPreparedStateChange(
+                previousRef: "develop",
+                previousCommitSHA: "1111111111111111111111111111111111111111",
+                nextRef: "develop",
+                nextCommitSHA: "1111111111111111111111111111111111111111"
+            )
+        )
+    }
+
+    func testWorkspaceCleanupTriggeredForExistingWorkspaceWithoutStoredCommit() {
+        XCTAssertTrue(
+            TestRunner.shouldCleanWorkspaceForPreparedStateChange(
+                previousRef: "develop",
+                previousCommitSHA: nil,
+                nextRef: "develop",
+                nextCommitSHA: "1111111111111111111111111111111111111111"
+            )
+        )
+    }
+
     func testWorkspaceLocalChangeCleanupDiscardsTrackedAndUntrackedFiles() throws {
         XCTAssertEqual(
             TestRunner.discardWorkspaceLocalChangesCommandArguments(),
