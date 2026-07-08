@@ -902,43 +902,53 @@ class TestRunner: ObservableObject {
 
         for directoryName in Self.workspaceBuildArtifactDirectoryNames {
             let artifactURL = directory.appendingPathComponent(directoryName, isDirectory: true)
-            guard fileManager.fileExists(atPath: artifactURL.path) else { continue }
-
-            do {
-                try fileManager.removeItem(at: artifactURL)
-                print("TestRunner: Removed stale build artifact directory: \(artifactURL.path)")
-                DispatchQueue.main.async { [weak self] in
-                    self?.output += "Removed stale build artifact directory '\(directoryName)'.\n"
-                }
-            } catch {
-                print("TestRunner: Failed to remove build artifact directory \(artifactURL.path): \(error)")
-                DispatchQueue.main.async { [weak self] in
-                    self?.output += "Error: Failed to remove build artifact directory '\(directoryName)': \(error.localizedDescription)\n"
-                }
+            if !removeWorkspaceBuildArtifactDirectorySync(
+                artifactURL,
+                displayName: directoryName
+            ) {
                 return false
             }
         }
 
         let artifactURL = workspaceBuildArtifactDirectory(in: directory)
-        guard fileManager.fileExists(atPath: artifactURL.path) else {
-            return true
+        return removeWorkspaceBuildArtifactDirectorySync(
+            artifactURL,
+            displayName: artifactURL.lastPathComponent
+        )
+    }
+
+    private func removeWorkspaceBuildArtifactDirectorySync(_ artifactURL: URL, displayName: String) -> Bool {
+        guard fileManager.fileExists(atPath: artifactURL.path) else { return true }
+
+        let maxAttempts = 3
+        var lastError: Error?
+        for attempt in 1...maxAttempts {
+            do {
+                try fileManager.removeItem(at: artifactURL)
+                print("TestRunner: Removed stale build artifact directory: \(artifactURL.path)")
+                DispatchQueue.main.async { [weak self] in
+                    self?.output += "Removed stale build artifact directory '\(displayName)'.\n"
+                }
+                return true
+            } catch {
+                guard fileManager.fileExists(atPath: artifactURL.path) else {
+                    print("TestRunner: Build artifact directory disappeared during cleanup: \(artifactURL.path)")
+                    return true
+                }
+
+                lastError = error
+                print("TestRunner: Failed to remove build artifact directory \(artifactURL.path) on attempt \(attempt): \(error)")
+                if attempt < maxAttempts {
+                    Thread.sleep(forTimeInterval: 0.25)
+                }
+            }
         }
 
-        do {
-            try fileManager.removeItem(at: artifactURL)
-            print("TestRunner: Removed stale build artifact directory: \(artifactURL.path)")
-            DispatchQueue.main.async { [weak self] in
-                self?.output += "Removed stale build artifact directory '\(artifactURL.lastPathComponent)'.\n"
-            }
-        } catch {
-            print("TestRunner: Failed to remove build artifact directory \(artifactURL.path): \(error)")
-            DispatchQueue.main.async { [weak self] in
-                self?.output += "Error: Failed to remove build artifact directory '\(artifactURL.lastPathComponent)': \(error.localizedDescription)\n"
-            }
-            return false
+        let errorDescription = lastError?.localizedDescription ?? "Unknown error"
+        DispatchQueue.main.async { [weak self] in
+            self?.output += "Error: Failed to remove build artifact directory '\(displayName)': \(errorDescription)\n"
         }
-
-        return true
+        return false
     }
 
     private func previouslyPreparedWorkspaceRef(in directory: URL) -> String? {
