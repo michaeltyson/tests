@@ -141,6 +141,57 @@ final class GitHistoryServiceTests: XCTestCase {
         )
     }
 
+    func testRepositoryRootFromStaleWorktreeMetadataError() {
+        let output = """
+        fatal: not a git repository: '/Users/michael/Documents/Projects/Loopy Pro/Loopy Pro/.git/worktrees/worktree14'
+        """
+
+        XCTAssertEqual(
+            GitHistoryService.repositoryRootFromStaleWorktreeMetadata(in: output),
+            "/Users/michael/Documents/Projects/Loopy Pro/Loopy Pro"
+        )
+    }
+
+    func testLoadHistoryFallsBackToDurableSourceForBrokenLinkedWorktree() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let source = root.appendingPathComponent("source", isDirectory: true)
+        let worktree = root.appendingPathComponent("linked", isDirectory: true)
+        try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        try runGit(["init"], in: source)
+        try runGit(["config", "user.email", "tests@example.com"], in: source)
+        try runGit(["config", "user.name", "Tests"], in: source)
+        try "initial\n".write(
+            to: source.appendingPathComponent("README.md"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try runGit(["add", "README.md"], in: source)
+        try runGit(["commit", "-m", "Initial commit"], in: source)
+        try runGit(["worktree", "add", "-b", "feature", worktree.path, "HEAD"], in: source)
+
+        let gitFile = worktree.appendingPathComponent(".git")
+        let gitFileContents = try String(contentsOf: gitFile, encoding: .utf8)
+        let gitDirPath = gitFileContents
+            .dropFirst("gitdir:".count)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        try FileManager.default.removeItem(at: URL(fileURLWithPath: gitDirPath))
+
+        let result = GitHistoryService(maximumCommitCount: 10).loadHistory(
+            repositoryPath: worktree.path,
+            testRuns: [],
+            currentTestRun: nil,
+            fallbackBranchName: nil
+        )
+
+        XCTAssertNil(result.errorMessage)
+        XCTAssertEqual(result.commits.map(\.subject), ["Initial commit"])
+    }
+
     func testLatestTestRunsByCommitSHAPrefersNewestRun() {
         var older = TestRun(
             id: UUID(),
@@ -381,5 +432,33 @@ final class GitHistoryServiceTests: XCTestCase {
         XCTAssertEqual(nodes[0].bottomLanes, [])
         XCTAssertEqual(nodes[0].bottomConnections, [])
         XCTAssertEqual(nodes[0].laneCount, 1)
+    }
+
+    @discardableResult
+    private func runGit(_ arguments: [String], in directory: URL) throws -> String {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        process.arguments = arguments
+        process.currentDirectoryURL = directory
+
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+
+        try process.run()
+        process.waitUntilExit()
+
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let output = String(data: data, encoding: .utf8) ?? ""
+        if process.terminationStatus != 0 {
+            throw NSError(
+                domain: "GitHistoryServiceTests.git",
+                code: Int(process.terminationStatus),
+                userInfo: [
+                    NSLocalizedDescriptionKey: "git \(arguments.joined(separator: " ")) failed: \(output)"
+                ]
+            )
+        }
+        return output
     }
 }

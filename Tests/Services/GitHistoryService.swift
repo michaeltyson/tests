@@ -29,10 +29,27 @@ final class GitHistoryService {
         currentTestRun: TestRun?,
         fallbackBranchName: String?
     ) -> LoadResult {
+        loadHistory(
+            repositoryPath: repositoryPath,
+            testRuns: testRuns,
+            currentTestRun: currentTestRun,
+            fallbackBranchName: fallbackBranchName,
+            allowRecovery: true
+        )
+    }
+
+    private func loadHistory(
+        repositoryPath: String,
+        testRuns: [TestRun],
+        currentTestRun: TestRun?,
+        fallbackBranchName: String?,
+        allowRecovery: Bool
+    ) -> LoadResult {
         let trimmedPath = repositoryPath.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedPath.isEmpty else {
             return LoadResult(commits: [], errorMessage: "Set a repository path in Settings to load commit history.")
         }
+        let resolvedPath = resolvedRepositorySourcePath(from: trimmedPath)
 
         var arguments = [
             "log",
@@ -42,7 +59,7 @@ final class GitHistoryService {
             "-n",
             "\(maximumCommitCount)"
         ]
-        let availableReferences = gitReferences(repositoryPath: trimmedPath)
+        let availableReferences = gitReferences(repositoryPath: resolvedPath)
         let refs = Self.canonicalHistoryRefs(from: Set(availableReferences.map(\.name)))
         let canonicalBranchHeads = Self.canonicalBranchHeads(
             from: Dictionary(
@@ -58,10 +75,25 @@ final class GitHistoryService {
 
         let result = runGitCommand(
             arguments,
-            repositoryPath: trimmedPath
+            repositoryPath: resolvedPath
         )
 
         guard result.success else {
+            if allowRecovery,
+               recoverStaleWorktreeMetadata(
+                   repositoryPath: resolvedPath,
+                   fallbackRepositoryPath: trimmedPath,
+                   gitOutput: result.output
+               ) {
+                return loadHistory(
+                    repositoryPath: trimmedPath,
+                    testRuns: testRuns,
+                    currentTestRun: currentTestRun,
+                    fallbackBranchName: fallbackBranchName,
+                    allowRecovery: false
+                )
+            }
+
             let trimmedOutput = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
             let message = trimmedOutput.isEmpty ? "Could not load git history." : trimmedOutput
             return LoadResult(commits: [], errorMessage: message)
@@ -139,6 +171,81 @@ final class GitHistoryService {
             outputHandle.readabilityHandler = nil
             return (false, error.localizedDescription)
         }
+    }
+
+    private func resolvedRepositorySourcePath(from configuredPath: String) -> String {
+        let commonDirResult = runGitCommand(
+            ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+            repositoryPath: configuredPath
+        )
+        if commonDirResult.success {
+            let commonDirPath = commonDirResult.output.trimmingCharacters(in: .whitespacesAndNewlines)
+            let commonDirURL = URL(fileURLWithPath: commonDirPath)
+            if !commonDirPath.isEmpty, commonDirURL.lastPathComponent == ".git" {
+                return commonDirURL.deletingLastPathComponent().path
+            }
+        }
+
+        return Self.repositoryRootFromLinkedWorktree(at: configuredPath)
+            ?? Self.repositoryRootFromStaleWorktreeMetadata(in: commonDirResult.output)
+            ?? configuredPath
+    }
+
+    @discardableResult
+    private func recoverStaleWorktreeMetadata(
+        repositoryPath: String,
+        fallbackRepositoryPath: String,
+        gitOutput: String
+    ) -> Bool {
+        guard Self.outputIndicatesStaleWorktreeMetadata(gitOutput) else {
+            return false
+        }
+
+        let repositoryRoot = Self.repositoryRootFromStaleWorktreeMetadata(in: gitOutput)
+            ?? Self.repositoryRootFromLinkedWorktree(at: fallbackRepositoryPath)
+            ?? repositoryPath
+        let pruneResult = runGitCommand(["worktree", "prune"], repositoryPath: repositoryRoot)
+        return pruneResult.success
+    }
+
+    static func outputIndicatesStaleWorktreeMetadata(_ output: String) -> Bool {
+        output.contains("/.git/worktrees/")
+            || output.contains("gitdir file points to non-existent location")
+    }
+
+    static func repositoryRootFromStaleWorktreeMetadata(in output: String) -> String? {
+        let marker = "/.git/worktrees/"
+        guard let markerRange = output.range(of: marker) else {
+            return nil
+        }
+
+        let prefix = output[..<markerRange.lowerBound]
+        let delimiterIndex = prefix.lastIndex { character in
+            character == "'" || character == "\""
+        } ?? prefix.lastIndex { character in
+            character.isWhitespace
+        }
+        let pathStart = delimiterIndex.map { output.index(after: $0) } ?? output.startIndex
+        let rootPath = String(output[pathStart..<markerRange.lowerBound])
+        return rootPath.hasPrefix("/") ? rootPath : nil
+    }
+
+    static func repositoryRootFromLinkedWorktree(at repositoryPath: String) -> String? {
+        let gitFileURL = URL(fileURLWithPath: repositoryPath)
+            .appendingPathComponent(".git")
+        guard let contents = try? String(contentsOf: gitFileURL, encoding: .utf8) else {
+            return nil
+        }
+
+        let prefix = "gitdir:"
+        guard contents.hasPrefix(prefix) else {
+            return nil
+        }
+
+        let gitDirPath = contents
+            .dropFirst(prefix.count)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return repositoryRootFromStaleWorktreeMetadata(in: gitDirPath)
     }
 
     static func parseGitLog(_ output: String) -> [GitLogCommit] {

@@ -196,7 +196,8 @@ class TestRunner: ObservableObject {
             } else {
                 self.ensureWorkspaceRemoteMatchesSourceSync(source: repositoryRoot, workspace: branchWorkspace)
 
-                if !self.isUsableGitRepositorySync(at: branchWorkspace) {
+                if !self.isUsableGitRepositorySync(at: branchWorkspace)
+                    || !self.hasCheckedOutTrackedFilesSync(in: branchWorkspace) {
                     print("TestRunner: Workspace git metadata is invalid, rebuilding before fetch")
                     DispatchQueue.main.async {
                         self.output += "Workspace git metadata is invalid. Recreating workspace...\n"
@@ -561,7 +562,8 @@ class TestRunner: ObservableObject {
     private func runGitCommandSync(
         _ arguments: [String],
         in directory: URL? = nil,
-        suppressFailureLogging: Bool = false
+        suppressFailureLogging: Bool = false,
+        suppressOutputLogging: Bool = false
     ) -> GitCommandResult {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
@@ -579,7 +581,7 @@ class TestRunner: ObservableObject {
             let data = pipe.fileHandleForReading.readDataToEndOfFile()
             let outputString = String(data: data, encoding: .utf8) ?? ""
             
-            if !outputString.isEmpty {
+            if !outputString.isEmpty && !suppressOutputLogging {
                 DispatchQueue.main.async { [weak self] in
                     self?.output += outputString
                 }
@@ -660,11 +662,36 @@ class TestRunner: ObservableObject {
     private func cloneRepositorySync(from source: URL, to destination: URL) -> Bool {
         // Remove --depth 1 to get all branches (needed for branch checkout).
         let result = runGitCommandSync(["clone", "file://\(source.path)", destination.path])
-        guard result.success else {
+        if !result.success {
+            guard recoverStaleSourceWorktreeMetadataSync(source: source, gitOutput: result.output) else {
+                return false
+            }
+
+            do {
+                if fileManager.fileExists(atPath: destination.path) {
+                    try fileManager.removeItem(at: destination)
+                }
+                try fileManager.createDirectory(at: destination, withIntermediateDirectories: true)
+            } catch {
+                print("TestRunner: Failed to reset failed clone destination: \(error)")
+                return false
+            }
+
+            let retryResult = runGitCommandSync(["clone", "file://\(source.path)", destination.path])
+            guard retryResult.success else {
+                return false
+            }
+        }
+
+        let fetchResult = fetchSourceRemoteTrackingBranchesSync(in: destination)
+        guard fetchResult.success else {
+            if recoverStaleSourceWorktreeMetadataSync(source: source, gitOutput: fetchResult.output) {
+                return fetchSourceRemoteTrackingBranchesSync(in: destination).success
+            }
             return false
         }
 
-        return fetchSourceRemoteTrackingBranchesSync(in: destination).success
+        return true
     }
 
     private func resolvedRepositorySourceURL(from configuredURL: URL) -> URL {
@@ -675,6 +702,12 @@ class TestRunner: ObservableObject {
         )
 
         guard commonDirResult.success else {
+            if let durableRoot = GitHistoryService.repositoryRootFromLinkedWorktree(at: configuredURL.path)
+                ?? GitHistoryService.repositoryRootFromStaleWorktreeMetadata(in: commonDirResult.output) {
+                let durableSourceURL = URL(fileURLWithPath: durableRoot)
+                print("TestRunner: Normalized repository source from \(configuredURL.path) to \(durableSourceURL.path)")
+                return durableSourceURL
+            }
             return configuredURL
         }
 
@@ -693,6 +726,22 @@ class TestRunner: ObservableObject {
             print("TestRunner: Normalized repository source from \(configuredURL.path) to \(durableSourceURL.path)")
         }
         return durableSourceURL
+    }
+
+    private func recoverStaleSourceWorktreeMetadataSync(source: URL, gitOutput: String) -> Bool {
+        guard GitHistoryService.outputIndicatesStaleWorktreeMetadata(gitOutput) else {
+            return false
+        }
+
+        let repositoryRoot = GitHistoryService.repositoryRootFromStaleWorktreeMetadata(in: gitOutput)
+            ?? GitHistoryService.repositoryRootFromLinkedWorktree(at: source.path)
+            ?? source.path
+        let pruneURL = URL(fileURLWithPath: repositoryRoot)
+        print("TestRunner: Pruning stale source worktree metadata in \(pruneURL.path)")
+        DispatchQueue.main.async { [weak self] in
+            self?.output += "Pruning stale repository worktree metadata...\n"
+        }
+        return runGitCommandSync(["worktree", "prune"], in: pruneURL).success
     }
 
     private func fetchRepositorySync(in directory: URL) -> GitCommandResult {
@@ -717,6 +766,29 @@ class TestRunner: ObservableObject {
 
     private func isUsableGitRepositorySync(at directory: URL) -> Bool {
         runGitCommandSync(["rev-parse", "--git-dir"], in: directory, suppressFailureLogging: true).success
+    }
+
+    private func hasCheckedOutTrackedFilesSync(in directory: URL) -> Bool {
+        let result = runGitCommandSync(
+            ["ls-files", "-z"],
+            in: directory,
+            suppressFailureLogging: true,
+            suppressOutputLogging: true
+        )
+        guard result.success else { return false }
+
+        let trackedFiles = result.output
+            .split(separator: "\u{0}")
+            .prefix(20)
+        guard !trackedFiles.isEmpty else { return true }
+
+        return trackedFiles.contains { relativePath in
+            fileManager.fileExists(
+                atPath: directory
+                    .appendingPathComponent(String(relativePath))
+                    .path
+            )
+        }
     }
 
     private func ensureWorkspaceRemoteMatchesSourceSync(source: URL, workspace: URL) {
