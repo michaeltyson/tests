@@ -42,6 +42,8 @@ class TestRunner: ObservableObject {
     private var errorPipe: Pipe?
     private var outputHandle: FileHandle?
     private var errorHandle: FileHandle?
+    private let setupProcessLock = NSLock()
+    private var setupProcess: Process?
     private var watchdogTimer: DispatchSourceTimer?
     private var testPhaseStartedAt: Date?
     private var lastTestProgressAt: Date?
@@ -61,6 +63,7 @@ class TestRunner: ObservableObject {
     private static let lastPreparedWorkspaceCommitSHAKey = "com.atastypixel.Tests.lastPreparedWorkspaceCommitSHA"
     private static let defaultWatchdogCheckInterval: TimeInterval = 15
     private static let testInactivityTimeoutInterval: TimeInterval = 10 * 60
+    private static let setupCommandTimeoutInterval: TimeInterval = 10 * 60
     private static let crashReportWaitTimeout: TimeInterval = 10
     static let sourceRemoteTrackingFetchRefspec = "+refs/remotes/origin/*:refs/remotes/source-origin/*"
 
@@ -188,21 +191,31 @@ class TestRunner: ObservableObject {
                     self.output += "Cloning repository...\n"
                 }
                 print("TestRunner: Cloning repository...")
-                if !self.cloneRepositorySync(from: repositoryRoot, to: branchWorkspace) {
+                let didCloneRepository = self.cloneRepositorySync(from: repositoryRoot, to: branchWorkspace)
+                if self.shouldStopBeforeLaunchingProcess() { return }
+                if !didCloneRepository {
                     self.abortRun(removeCurrentRun: true)
                     self.showError("Failed to clone repository", message: "Could not clone repository into the temp workspace.")
                     return
                 }
             } else {
                 self.ensureWorkspaceRemoteMatchesSourceSync(source: repositoryRoot, workspace: branchWorkspace)
+                if self.shouldStopBeforeLaunchingProcess() { return }
 
-                if !self.isUsableGitRepositorySync(at: branchWorkspace)
-                    || !self.hasCheckedOutTrackedFilesSync(in: branchWorkspace) {
+                let isUsableRepository = self.isUsableGitRepositorySync(at: branchWorkspace)
+                let hasCheckedOutTrackedFiles = isUsableRepository
+                    ? self.hasCheckedOutTrackedFilesSync(in: branchWorkspace)
+                    : false
+                if self.shouldStopBeforeLaunchingProcess() { return }
+
+                if !isUsableRepository || !hasCheckedOutTrackedFiles {
                     print("TestRunner: Workspace git metadata is invalid, rebuilding before fetch")
                     DispatchQueue.main.async {
                         self.output += "Workspace git metadata is invalid. Recreating workspace...\n"
                     }
-                    if !self.recreateWorkspaceSync(from: repositoryRoot, to: branchWorkspace) {
+                    let didRecreateWorkspace = self.recreateWorkspaceSync(from: repositoryRoot, to: branchWorkspace)
+                    if self.shouldStopBeforeLaunchingProcess() { return }
+                    if !didRecreateWorkspace {
                         self.abortRun(removeCurrentRun: true)
                         self.showError(
                             "Failed to rebuild workspace",
@@ -218,12 +231,15 @@ class TestRunner: ObservableObject {
                 }
                 print("TestRunner: Fetching repository updates...")
                 let fetchResult = self.fetchRepositorySync(in: branchWorkspace)
+                if self.shouldStopBeforeLaunchingProcess() { return }
                 if !fetchResult.success {
                     print("TestRunner: Fetch failed, rebuilding workspace and retrying")
                     DispatchQueue.main.async {
                         self.output += "Fetch failed. Recreating workspace and retrying...\n"
                     }
-                    if !self.recreateWorkspaceSync(from: repositoryRoot, to: branchWorkspace) {
+                    let didRecreateWorkspace = self.recreateWorkspaceSync(from: repositoryRoot, to: branchWorkspace)
+                    if self.shouldStopBeforeLaunchingProcess() { return }
+                    if !didRecreateWorkspace {
                         let detail = fetchResult.output.isEmpty ? "No additional git output available." : fetchResult.output
                         self.abortRun(removeCurrentRun: true)
                         self.showError(
@@ -247,7 +263,9 @@ class TestRunner: ObservableObject {
                     self.output += "Branch changed from '\(previousPreparedRef ?? "unknown")' to '\(branchToUse)'. Cleaning workspace state...\n"
                 }
                 print("TestRunner: Branch changed from \(previousPreparedRef ?? "unknown") to \(branchToUse); cleaning disposable workspace state before checkout")
-                if !self.cleanWorkspaceStateSync(in: branchWorkspace) {
+                let didCleanWorkspace = self.cleanWorkspaceStateSync(in: branchWorkspace)
+                if self.shouldStopBeforeLaunchingProcess() { return }
+                if !didCleanWorkspace {
                     self.abortRun(removeCurrentRun: true)
                     self.showError(
                         "Failed to clean workspace",
@@ -260,7 +278,9 @@ class TestRunner: ObservableObject {
                     self.output += "Discarding local workspace changes...\n"
                 }
                 print("TestRunner: Discarding local workspace changes before checkout")
-                if !self.discardWorkspaceLocalChangesSync(in: branchWorkspace) {
+                let didDiscardChanges = self.discardWorkspaceLocalChangesSync(in: branchWorkspace)
+                if self.shouldStopBeforeLaunchingProcess() { return }
+                if !didDiscardChanges {
                     self.abortRun(removeCurrentRun: true)
                     self.showError(
                         "Failed to clean workspace",
@@ -275,7 +295,9 @@ class TestRunner: ObservableObject {
                 self.output += "Checking out '\(branchToUse)'...\n"
             }
             print("TestRunner: Checking out ref: \(branchToUse)")
-            if !self.checkoutRefSync(branchToUse, in: branchWorkspace) {
+            let didCheckoutRef = self.checkoutRefSync(branchToUse, in: branchWorkspace)
+            if self.shouldStopBeforeLaunchingProcess() { return }
+            if !didCheckoutRef {
                 self.abortRun(removeCurrentRun: true)
                 self.showError(
                     "Failed to checkout ref",
@@ -288,7 +310,9 @@ class TestRunner: ObservableObject {
                 self.output += "Ensuring exact checkout state...\n"
             }
             print("TestRunner: Ensuring workspace has no local changes after checkout")
-            if !self.discardWorkspaceLocalChangesSync(in: branchWorkspace) {
+            let didDiscardPostCheckoutChanges = self.discardWorkspaceLocalChangesSync(in: branchWorkspace)
+            if self.shouldStopBeforeLaunchingProcess() { return }
+            if !didDiscardPostCheckoutChanges {
                 self.abortRun(removeCurrentRun: true)
                 self.showError(
                     "Failed to clean workspace",
@@ -298,6 +322,7 @@ class TestRunner: ObservableObject {
             }
 
             let currentCommitSHA = self.currentCommitSHASync(in: branchWorkspace)
+            if self.shouldStopBeforeLaunchingProcess() { return }
             let shouldCleanForPreparedStateChange = Self.shouldCleanWorkspaceForPreparedStateChange(
                 previousRef: previousPreparedRef,
                 previousCommitSHA: previousPreparedCommitSHA,
@@ -311,7 +336,9 @@ class TestRunner: ObservableObject {
                     self.output += "Commit changed under '\(branchToUse)'. Cleaning workspace build state...\n"
                 }
                 print("TestRunner: Ref \(branchToUse) resolved to a different commit; cleaning disposable workspace build state")
-                if !self.cleanWorkspaceStateSync(in: branchWorkspace) {
+                let didCleanWorkspace = self.cleanWorkspaceStateSync(in: branchWorkspace)
+                if self.shouldStopBeforeLaunchingProcess() { return }
+                if !didCleanWorkspace {
                     self.abortRun(removeCurrentRun: true)
                     self.showError(
                         "Failed to clean workspace",
@@ -395,6 +422,7 @@ class TestRunner: ObservableObject {
                     in: branchWorkspace,
                     label: "pre-build script"
                 )
+                if self.shouldStopBeforeLaunchingProcess() { return }
                 if !preBuildResult.success {
                     let detail = preBuildResult.output.trimmingCharacters(in: .whitespacesAndNewlines)
                     let message = detail.isEmpty
@@ -470,6 +498,13 @@ class TestRunner: ObservableObject {
     }
     
     private func killCurrentProcess() {
+        setupProcessLock.lock()
+        let setupProcess = self.setupProcess
+        setupProcessLock.unlock()
+        if let setupProcess, setupProcess.isRunning {
+            setupProcess.terminate()
+        }
+
         if let process = process {
             process.terminate()
             // Don't wait synchronously - let it terminate in background
@@ -498,17 +533,31 @@ class TestRunner: ObservableObject {
         let output: String
     }
 
-    private struct ShellCommandResult {
+    struct ShellCommandResult {
         let success: Bool
         let output: String
         let terminationStatus: Int32
+        let timedOut: Bool
     }
 
     @discardableResult
     private func runCommandSync(_ executablePath: String, arguments: [String]) -> ShellCommandResult {
+        Self.runProcessSync(executablePath, arguments: arguments)
+    }
+
+    @discardableResult
+    static func runProcessSync(
+        _ executablePath: String,
+        arguments: [String],
+        currentDirectoryURL: URL? = nil,
+        timeout: TimeInterval? = nil,
+        processStarted: ((Process) -> Void)? = nil,
+        processFinished: ((Process) -> Void)? = nil
+    ) -> ShellCommandResult {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executablePath)
         process.arguments = arguments
+        process.currentDirectoryURL = currentDirectoryURL
 
         let pipe = Pipe()
         process.standardOutput = pipe
@@ -516,6 +565,10 @@ class TestRunner: ObservableObject {
         let outputHandle = pipe.fileHandleForReading
         let outputLock = NSLock()
         var collectedOutput = Data()
+        let processStateLock = NSLock()
+        var processHasFinished = false
+        var didTimeOut = false
+        var timeoutWorkItem: DispatchWorkItem?
 
         do {
             // Drain command output while the subprocess is still running.
@@ -530,7 +583,35 @@ class TestRunner: ObservableObject {
             }
 
             try process.run()
+            processStarted?(process)
+
+            if let timeout, timeout > 0 {
+                let workItem = DispatchWorkItem {
+                    processStateLock.lock()
+                    let shouldTerminate = !processHasFinished && process.isRunning
+                    if shouldTerminate {
+                        didTimeOut = true
+                    }
+                    processStateLock.unlock()
+
+                    if shouldTerminate {
+                        process.terminate()
+                    }
+                }
+                timeoutWorkItem = workItem
+                DispatchQueue.global(qos: .utility).asyncAfter(
+                    deadline: .now() + timeout,
+                    execute: workItem
+                )
+            }
+
             process.waitUntilExit()
+            processStateLock.lock()
+            processHasFinished = true
+            let timedOut = didTimeOut
+            processStateLock.unlock()
+            timeoutWorkItem?.cancel()
+            processFinished?(process)
             outputHandle.readabilityHandler = nil
 
             let trailingData = outputHandle.readDataToEndOfFile()
@@ -541,19 +622,27 @@ class TestRunner: ObservableObject {
             }
 
             outputLock.lock()
-            let outputString = String(data: collectedOutput, encoding: .utf8) ?? ""
+            var outputString = String(data: collectedOutput, encoding: .utf8) ?? ""
             outputLock.unlock()
+            if timedOut {
+                let separator = outputString.isEmpty || outputString.hasSuffix("\n") ? "" : "\n"
+                outputString += "\(separator)Command timed out after \(formatDuration(timeout ?? 0)).\n"
+            }
             return ShellCommandResult(
-                success: process.terminationStatus == 0,
+                success: process.terminationStatus == 0 && !timedOut,
                 output: outputString,
-                terminationStatus: process.terminationStatus
+                terminationStatus: process.terminationStatus,
+                timedOut: timedOut
             )
         } catch {
+            timeoutWorkItem?.cancel()
+            processFinished?(process)
             outputHandle.readabilityHandler = nil
             return ShellCommandResult(
                 success: false,
                 output: "Failed to run \(executablePath): \(error.localizedDescription)",
-                terminationStatus: -1
+                terminationStatus: -1,
+                timedOut: false
             )
         }
     }
@@ -565,98 +654,84 @@ class TestRunner: ObservableObject {
         suppressFailureLogging: Bool = false,
         suppressOutputLogging: Bool = false
     ) -> GitCommandResult {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        process.arguments = arguments
-        process.currentDirectoryURL = directory
-        
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = pipe
-        
-        do {
-            try process.run()
-            process.waitUntilExit()
-            
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            let outputString = String(data: data, encoding: .utf8) ?? ""
-            
-            if !outputString.isEmpty && !suppressOutputLogging {
-                DispatchQueue.main.async { [weak self] in
-                    self?.output += outputString
-                }
+        let result = Self.runProcessSync(
+            "/usr/bin/git",
+            arguments: arguments,
+            currentDirectoryURL: directory,
+            timeout: Self.setupCommandTimeoutInterval,
+            processStarted: { [weak self] process in
+                self?.setSetupProcess(process)
+            },
+            processFinished: { [weak self] process in
+                self?.clearSetupProcess(process)
             }
-            
-            let success = process.terminationStatus == 0
-            if !success && !suppressFailureLogging {
-                let command = arguments.joined(separator: " ")
-                let trimmed = outputString.trimmingCharacters(in: .whitespacesAndNewlines)
-                print("TestRunner: Git command failed (\(command))")
-                if !trimmed.isEmpty {
-                    print("TestRunner: Git output: \(trimmed)")
-                }
-            }
-            return GitCommandResult(success: success, output: outputString)
-        } catch {
-            let message = "Failed to run git command (\(arguments.joined(separator: " "))): \(error.localizedDescription)"
-            print("TestRunner: \(message)")
+        )
+
+        if !result.output.isEmpty && !suppressOutputLogging {
             DispatchQueue.main.async { [weak self] in
-                self?.output += "\(message)\n"
+                self?.output += result.output
             }
-            return GitCommandResult(success: false, output: message)
         }
+
+        if !result.success && !suppressFailureLogging {
+            let command = arguments.joined(separator: " ")
+            let trimmed = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+            print("TestRunner: Git command failed (\(command))")
+            if !trimmed.isEmpty {
+                print("TestRunner: Git output: \(trimmed)")
+            }
+        }
+        return GitCommandResult(success: result.success, output: result.output)
     }
 
     @discardableResult
-    private func runShellScriptSync(
+    func runShellScriptSync(
         _ script: String,
         in directory: URL,
         label: String
     ) -> ShellCommandResult {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        process.arguments = ["-lc", script]
-        process.currentDirectoryURL = directory
-
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = pipe
-
-        do {
-            try process.run()
-            process.waitUntilExit()
-
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            let outputString = String(data: data, encoding: .utf8) ?? ""
-
-            if !outputString.isEmpty {
-                DispatchQueue.main.async { [weak self] in
-                    self?.output += outputString
-                }
+        let result = Self.runProcessSync(
+            "/bin/zsh",
+            arguments: ["-lc", script],
+            currentDirectoryURL: directory,
+            timeout: Self.setupCommandTimeoutInterval,
+            processStarted: { [weak self] process in
+                self?.setSetupProcess(process)
+            },
+            processFinished: { [weak self] process in
+                self?.clearSetupProcess(process)
             }
+        )
 
-            let success = process.terminationStatus == 0
-            if !success {
-                let trimmedOutput = outputString.trimmingCharacters(in: .whitespacesAndNewlines)
-                print("TestRunner: \(label) failed with exit status \(process.terminationStatus)")
-                if !trimmedOutput.isEmpty {
-                    print("TestRunner: \(label) output: \(trimmedOutput)")
-                }
-            }
-
-            return ShellCommandResult(
-                success: success,
-                output: outputString,
-                terminationStatus: process.terminationStatus
-            )
-        } catch {
-            let message = "Failed to run \(label): \(error.localizedDescription)"
-            print("TestRunner: \(message)")
+        if !result.output.isEmpty {
             DispatchQueue.main.async { [weak self] in
-                self?.output += "\(message)\n"
+                self?.output += result.output
             }
-            return ShellCommandResult(success: false, output: message, terminationStatus: -1)
         }
+
+        if !result.success {
+            let trimmedOutput = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+            print("TestRunner: \(label) failed with exit status \(result.terminationStatus)")
+            if !trimmedOutput.isEmpty {
+                print("TestRunner: \(label) output: \(trimmedOutput)")
+            }
+        }
+
+        return result
+    }
+
+    private func setSetupProcess(_ process: Process) {
+        setupProcessLock.lock()
+        setupProcess = process
+        setupProcessLock.unlock()
+    }
+
+    private func clearSetupProcess(_ process: Process) {
+        setupProcessLock.lock()
+        if setupProcess === process {
+            setupProcess = nil
+        }
+        setupProcessLock.unlock()
     }
     
     private func cloneRepositorySync(from source: URL, to destination: URL) -> Bool {

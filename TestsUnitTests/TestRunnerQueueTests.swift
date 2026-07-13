@@ -809,6 +809,109 @@ final class TestRunnerQueueTests: XCTestCase {
         XCTAssertEqual(runner.queuedRunBranchesForTesting, ["develop"])
     }
 
+    func testSynchronousProcessDrainsOutputLargerThanPipeCapacity() {
+        let result = TestRunner.runProcessSync(
+            "/bin/zsh",
+            arguments: ["-c", "head -c 200000 /dev/zero | tr '\\0' x"]
+        )
+
+        XCTAssertTrue(result.success)
+        XCTAssertFalse(result.timedOut)
+        XCTAssertEqual(result.output.utf8.count, 200_000)
+    }
+
+    func testSynchronousProcessTimesOut() {
+        let startedAt = Date()
+        let result = TestRunner.runProcessSync(
+            "/bin/sleep",
+            arguments: ["30"],
+            timeout: 0.1
+        )
+
+        XCTAssertFalse(result.success)
+        XCTAssertTrue(result.timedOut)
+        XCTAssertLessThan(Date().timeIntervalSince(startedAt), 2)
+    }
+
+    func testKillAllProcessesTerminatesTrackedPreparationScript() throws {
+        let runner = TestRunner()
+        let markerURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: markerURL) }
+
+        let completed = expectation(description: "Preparation script terminated")
+        let resultLock = NSLock()
+        var result: TestRunner.ShellCommandResult?
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            let commandResult = runner.runShellScriptSync(
+                "touch \(markerURL.path.shellQuotedForTest); exec sleep 30",
+                in: FileManager.default.temporaryDirectory,
+                label: "cancellation test"
+            )
+            resultLock.lock()
+            result = commandResult
+            resultLock.unlock()
+            completed.fulfill()
+        }
+
+        let markerDeadline = Date().addingTimeInterval(2)
+        while !FileManager.default.fileExists(atPath: markerURL.path), Date() < markerDeadline {
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: markerURL.path))
+
+        runner.killAllProcesses()
+        wait(for: [completed], timeout: 2)
+
+        resultLock.lock()
+        let capturedResult = result
+        resultLock.unlock()
+        XCTAssertEqual(capturedResult?.success, false)
+        XCTAssertEqual(capturedResult?.timedOut, false)
+    }
+
+    func testSelectedPreparationPlaceholderShowsLiveOutput() {
+        let placeholderID = UUID()
+
+        XCTAssertTrue(
+            TestHistoryRunPresentation.shouldShowLiveOutput(
+                isRunning: true,
+                currentRunID: nil,
+                placeholderRunID: placeholderID,
+                selectedRunID: placeholderID
+            )
+        )
+    }
+
+    func testPreparationStatusDoesNotClaimBuildHasStarted() {
+        XCTAssertEqual(
+            TestHistoryRunPresentation.statusText(
+                currentRunID: nil,
+                isBuilding: true,
+                queuedRunCount: 1
+            ),
+            "Preparing... (1 queued)"
+        )
+    }
+
+    func testRealRunReplacesSelectedPreparationPlaceholder() {
+        let placeholderID = UUID()
+
+        XCTAssertTrue(
+            TestHistoryRunPresentation.shouldSelectCurrentRun(
+                selectedRunID: placeholderID,
+                placeholderRunID: placeholderID
+            )
+        )
+        XCTAssertFalse(
+            TestHistoryRunPresentation.shouldSelectCurrentRun(
+                selectedRunID: UUID(),
+                placeholderRunID: placeholderID
+            )
+        )
+    }
+
     func testDifferentBranchTriggerQueuesWithoutCancellationRequest() {
         let runner = TestRunner()
         runner.isRunning = true
@@ -1018,5 +1121,11 @@ final class TestRunnerQueueTests: XCTestCase {
           </TestAction>
         </Scheme>
         """
+    }
+}
+
+private extension String {
+    var shellQuotedForTest: String {
+        "'\(replacingOccurrences(of: "'", with: "'\\''"))'"
     }
 }

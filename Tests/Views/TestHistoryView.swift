@@ -21,6 +21,35 @@ private enum TestHistoryDefaults {
     static let maximumSidebarWidth: CGFloat = 600
 }
 
+enum TestHistoryRunPresentation {
+    static func statusText(
+        currentRunID: UUID?,
+        isBuilding: Bool,
+        queuedRunCount: Int
+    ) -> String {
+        let phase = currentRunID == nil ? "Preparing" : (isBuilding ? "Building" : "Running tests")
+        let queueText = queuedRunCount > 0 ? " (\(queuedRunCount) queued)" : ""
+        return "\(phase)...\(queueText)"
+    }
+
+    static func shouldShowLiveOutput(
+        isRunning: Bool,
+        currentRunID: UUID?,
+        placeholderRunID: UUID?,
+        selectedRunID: UUID?
+    ) -> Bool {
+        guard isRunning, let selectedRunID else { return false }
+        return selectedRunID == currentRunID || selectedRunID == placeholderRunID
+    }
+
+    static func shouldSelectCurrentRun(
+        selectedRunID: UUID?,
+        placeholderRunID: UUID?
+    ) -> Bool {
+        selectedRunID == nil || selectedRunID == placeholderRunID
+    }
+}
+
 struct TestHistoryView: View {
     @ObservedObject var testResultStore: TestResultStore
     @ObservedObject var testRunner: TestRunner
@@ -109,50 +138,54 @@ struct TestHistoryView: View {
                             ProgressView()
                                 .controlSize(.small)
                             Text(
-                                testRunner.isBuilding
-                                    ? (testRunner.queuedRunCount > 0 ? "Building... (\(testRunner.queuedRunCount) queued)" : "Building...")
-                                    : (testRunner.queuedRunCount > 0 ? "Running tests... (\(testRunner.queuedRunCount) queued)" : "Running tests...")
+                                TestHistoryRunPresentation.statusText(
+                                    currentRunID: testRunner.currentTestRun?.id,
+                                    isBuilding: testRunner.isBuilding,
+                                    queuedRunCount: testRunner.queuedRunCount
+                                )
                             )
                                 .font(.system(size: 15, weight: .medium))
                         }
                         
                         // Test counts badge
-                        HStack(spacing: 10) {
-                            HStack(spacing: 4) {
-                                Image(systemName: "checkmark.circle.fill")
-                                    .foregroundColor(.green)
-                                    .font(.system(size: 11))
-                                Text("\(testRunner.passingCount)")
-                                    .font(.system(size: 13, weight: .semibold))
-                            }
-                            
-                            if testRunner.failingCount > 0 {
+                        if testRunner.currentTestRun != nil {
+                            HStack(spacing: 10) {
                                 HStack(spacing: 4) {
-                                    Image(systemName: "xmark.circle.fill")
-                                        .foregroundColor(.red)
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .foregroundColor(.green)
                                         .font(.system(size: 11))
-                                    Text("\(testRunner.failingCount)")
+                                    Text("\(testRunner.passingCount)")
                                         .font(.system(size: 13, weight: .semibold))
                                 }
+
+                                if testRunner.failingCount > 0 {
+                                    HStack(spacing: 4) {
+                                        Image(systemName: "xmark.circle.fill")
+                                            .foregroundColor(.red)
+                                            .font(.system(size: 11))
+                                        Text("\(testRunner.failingCount)")
+                                            .font(.system(size: 13, weight: .semibold))
+                                    }
+                                }
+
+                                if testRunner.totalCount > 0 {
+                                    Text("of \(testRunner.totalCount)")
+                                        .font(.system(size: 12, weight: .regular))
+                                        .foregroundColor(.secondary)
+                                }
                             }
-                            
-                            if testRunner.totalCount > 0 {
-                                Text("of \(testRunner.totalCount)")
-                                    .font(.system(size: 12, weight: .regular))
-                                    .foregroundColor(.secondary)
-                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(.thinMaterial)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .strokeBorder(Color.primary.opacity(0.1), lineWidth: 0.5)
+                            )
+                            .cornerRadius(6)
                         }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(.thinMaterial)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 6)
-                                .strokeBorder(Color.primary.opacity(0.1), lineWidth: 0.5)
-                        )
-                        .cornerRadius(6)
                         
                         // Progress bar - expands to fill space
-                        if testRunner.totalCount > 0 {
+                        if testRunner.currentTestRun != nil, testRunner.totalCount > 0 {
                             let progress = Double(testRunner.passingCount + testRunner.failingCount) / Double(testRunner.totalCount)
                             
                             ProgressView(value: progress)
@@ -184,10 +217,13 @@ struct TestHistoryView: View {
                 
                 Divider()
                 
-                // Content - show live output only if selected test is the current running test
-                if testRunner.isRunning,
-                   let currentTestRun = testRunner.currentTestRun,
-                   selectedTestRun?.id == currentTestRun.id {
+                // Content - show live output for both workspace preparation and the current run.
+                if TestHistoryRunPresentation.shouldShowLiveOutput(
+                    isRunning: testRunner.isRunning,
+                    currentRunID: testRunner.currentTestRun?.id,
+                    placeholderRunID: runningPlaceholderTestRun?.id,
+                    selectedRunID: selectedTestRun?.id
+                ) {
                     // Show live output for the currently running test (only if it's selected)
                     VStack(alignment: .leading, spacing: 0) {
                         TerminalOutputView(text: testRunner.output, followsTail: true)
@@ -239,11 +275,16 @@ struct TestHistoryView: View {
             startModifierKeyMonitoring()
         }
         .onChange(of: testRunner.currentTestRun) { _, newTestRun in
-            // Auto-select the running test only if nothing is currently selected
-            if let newTestRun = newTestRun, selectedTestRun == nil {
+            if let newTestRun {
+                let shouldSelectCurrentRun = TestHistoryRunPresentation.shouldSelectCurrentRun(
+                    selectedRunID: selectedTestRun?.id,
+                    placeholderRunID: runningPlaceholderTestRun?.id
+                )
                 runningPlaceholderTestRun = nil
-                selectedTestRun = newTestRun
-            } else if newTestRun == nil {
+                if shouldSelectCurrentRun {
+                    selectedTestRun = newTestRun
+                }
+            } else {
                 if testRunner.isRunning {
                     if runningPlaceholderTestRun == nil {
                         runningPlaceholderTestRun = TestRun(status: .running)
