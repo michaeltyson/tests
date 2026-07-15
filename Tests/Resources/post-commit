@@ -17,6 +17,11 @@ if [ -z "$BRANCH" ]; then
     exit 0
 fi
 
+COMMIT="$(git rev-parse --verify HEAD 2>/dev/null)"
+if [ -z "$COMMIT" ]; then
+    exit 0
+fi
+
 # Get the path to TestsCLI
 # This script is in the app bundle's Resources folder
 # Resolve symlinks to get the actual script location
@@ -39,7 +44,7 @@ if [ ! -f "$CLI_PATH" ]; then
     exit 1
 fi
 
-# Trigger test run with current branch
-"$CLI_PATH" trigger --branch "$BRANCH"
+# Trigger the exact commit; retain the branch as display metadata.
+"$CLI_PATH" trigger --commit "$COMMIT" --branch "$BRANCH"
 
 exit 0

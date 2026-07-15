@@ -22,6 +22,7 @@ struct TestRun: Identifiable, Codable, Hashable {
     var status: TestRunStatus
     var duration: TimeInterval?
     var outputLog: String?
+    var failureSummary: String?
     var xcprettyOutput: String?
     var errorDescription: String?
     var xcprettyHTMLPath: String?

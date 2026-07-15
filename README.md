@@ -53,7 +53,8 @@ If you prefer to wire it manually, call the bundled CLI from `.git/hooks/post-co
 ```sh
 #!/bin/sh
 branch="$(git symbolic-ref --quiet --short HEAD 2>/dev/null)" || exit 0
-/path/to/Tests.app/Contents/MacOS/TestsCLI trigger --branch "$branch"
+commit="$(git rev-parse --verify HEAD 2>/dev/null)" || exit 0
+/path/to/Tests.app/Contents/MacOS/TestsCLI trigger --commit "$commit" --branch "$branch"
 ```
 
 Replace `/path/to/Tests.app` with the installed app location.
@@ -69,6 +70,41 @@ Click the menu bar icon to see the current status and commands.
 - **Settings...** opens the setup and configuration flow.
 
 Launching the app again while it is already running brings the existing instance's reports window forward.
+
+### Synchronous CLI and Codex
+
+Use the bundled CLI when another tool needs the result from the exact environment owned by Tests:
+
+```sh
+/Applications/Tests.app/Contents/MacOS/TestsCLI run --commit HEAD
+```
+
+`run` resolves the supplied Git revision to an exact commit, submits it to the running Tests app, and blocks until the Tests-owned run completes. It launches Tests when necessary. If the same commit is already running or queued, the caller attaches to that run; if a different commit is active, the requested commit is queued.
+
+The default output mode is deliberately concise for Codex and other automated callers. It prints a one-line result plus failure details obtained from the result bundle, without returning the complete build log:
+
+```sh
+TestsCLI run --commit HEAD --output failures
+```
+
+Use `--output full` when the complete Tests-owned log is needed. The command exits with status 0 for a successful run (including warnings), 1 for test failures, 2 for setup or infrastructure errors, and 64 for invalid command-line usage. `--timeout <seconds>` limits how long the caller waits without cancelling the app-owned run.
+
+The repository defaults to the Git repository containing the current directory. A path may be supplied explicitly when invoking the command elsewhere:
+
+```sh
+TestsCLI run --repository /path/to/project --commit HEAD --output failures
+```
+
+Tests verifies that the requested repository—including linked Git worktrees—matches its configured repository before starting the run. Run `TestsCLI run --help` for the complete command reference.
+
+For a Codex workflow, treat this command as the authoritative completion gate after creating a candidate commit:
+
+```sh
+git commit ...
+/Applications/Tests.app/Contents/MacOS/TestsCLI run --commit HEAD --output failures
+```
+
+Do not consider the change finished until the command exits successfully. A local `xcodebuild` run can still be useful for fast iteration, but it does not replace this Tests-owned run.
 
 ## Build From Source
 

@@ -21,6 +21,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUserNoti
     var settingsWindow: NSWindow?
     var branchSelectionWindow: NSWindow?
     var menuBarManager: MenuBarManager?
+    private var testAPIController: TestAPIController?
     private var cancellables = Set<AnyCancellable>()
     
     override init() {
@@ -80,6 +81,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUserNoti
         
         // Set up observers after menu bar is ready
         setupObservers()
+
+        let testAPIController = TestAPIController(testRunner: testRunner)
+        self.testAPIController = testAPIController
+        testAPIController.start()
     }
     
     private func setupObservers() {
@@ -247,6 +252,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUserNoti
         print("AppDelegate: TestRunner isPaused: \(testRunner.isPaused)")
 
         let branchName = notification.userInfo?[TestUserNotification.branchUserInfoKey] as? String
+        let commitSHA = notification.userInfo?["commit"] as? String
+        let requestedRef = commitSHA ?? branchName
 
         if SettingsStore.shared.shouldIgnoreAutomaticRun(for: branchName) {
             print("AppDelegate: Ignoring trigger notification for branch prefix match: \(branchName ?? "nil")")
@@ -255,8 +262,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUserNoti
         
         // Only run tests if not paused (paused means ignore incoming notifications)
         if !testRunner.isPaused {
-            print("AppDelegate: Starting tests with branch: \(branchName ?? "nil")")
-            testRunner.runTests(branchName: branchName)
+            if let commitSHA, testRunner.containsRun(ref: commitSHA) {
+                print("AppDelegate: Exact commit \(commitSHA) is already running or queued; ignoring duplicate trigger")
+                return
+            }
+            print("AppDelegate: Starting tests with ref: \(requestedRef ?? "nil"), branch label: \(branchName ?? "nil")")
+            testRunner.runTests(branchName: requestedRef, displayBranchName: branchName)
         } else {
             print("AppDelegate: Ignoring trigger notification (tests are paused)")
         }

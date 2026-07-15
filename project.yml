@@ -13,6 +13,7 @@ targets:
     deploymentTarget: "15.0"
     sources:
       - path: CLI
+      - path: Shared
     settings:
       PRODUCT_BUNDLE_IDENTIFIER: com.atastypixel.TestsCLI
       SWIFT_VERSION: "5.0"
@@ -27,6 +28,7 @@ targets:
         excludes:
           - "**/Preview Content/**"
           - "Resources/ThirdPartyLicenses/**"
+      - path: Shared
     settings:
       PRODUCT_BUNDLE_IDENTIFIER: com.atastypixel.Tests
       INFOPLIST_KEY_LSUIElement: YES
