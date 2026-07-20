@@ -415,7 +415,14 @@ struct TestHistoryView: View {
     }
 
     private func runTests(for commit: GitCommitNode) {
-        testRunner.runTests(branchName: commit.branchNames.first ?? commit.sha, isManualRun: true)
+        // A graph action targets the selected commit, even when that commit is a
+        // branch head. Keep the branch name for presentation without checking out
+        // the local branch, which may already be active in another worktree.
+        testRunner.runTests(
+            branchName: commit.sha,
+            isManualRun: true,
+            displayBranchName: commit.branchNames.first
+        )
     }
 
     private func updateRunTestsModifierState(with modifierFlags: NSEvent.ModifierFlags? = nil) {

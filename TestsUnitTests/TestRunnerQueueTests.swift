@@ -48,6 +48,39 @@ final class TestRunnerQueueTests: XCTestCase {
         )
     }
 
+    func testDetachedCheckoutTargetPrefersFetchedOriginBranch() {
+        XCTAssertEqual(
+            TestRunner.detachedCheckoutTarget(
+                for: "release/2.1",
+                localBranchExists: true,
+                originBranchExists: true,
+                mirroredSourceRemoteBranchExists: true
+            ),
+            "refs/remotes/origin/release/2.1"
+        )
+    }
+
+    func testDetachedCheckoutTargetFallsBackToMirroredThenLocalBranch() {
+        XCTAssertEqual(
+            TestRunner.detachedCheckoutTarget(
+                for: "release/2.1",
+                localBranchExists: true,
+                originBranchExists: false,
+                mirroredSourceRemoteBranchExists: true
+            ),
+            TestRunner.mirroredSourceRemoteTrackingRef(for: "release/2.1")
+        )
+        XCTAssertEqual(
+            TestRunner.detachedCheckoutTarget(
+                for: "release/2.1",
+                localBranchExists: true,
+                originBranchExists: false,
+                mirroredSourceRemoteBranchExists: false
+            ),
+            "refs/heads/release/2.1"
+        )
+    }
+
     func testParallelTestingArgumentsIncludedWhenEnabled() {
         XCTAssertEqual(
             TestRunner.xcodebuildParallelTestingArguments(enabled: true),

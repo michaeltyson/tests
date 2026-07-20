@@ -1009,26 +1009,31 @@ class TestRunner: ObservableObject {
             return runGitCommandSync(["checkout", "--detach", ref], in: directory).success
         }
 
-        if localBranchExists(ref, in: directory) || originBranchExists(ref, in: directory) {
-            let checkoutResult = runGitCommandSync(["checkout", ref], in: directory)
-            if !checkoutResult.success {
-                return false
-            }
-            return resetToRemoteBranch(ref, in: directory)
-        }
+        let checkoutTarget = Self.detachedCheckoutTarget(
+            for: ref,
+            localBranchExists: localBranchExists(ref, in: directory),
+            originBranchExists: originBranchExists(ref, in: directory),
+            mirroredSourceRemoteBranchExists: mirroredSourceRemoteBranchExists(ref, in: directory)
+        )
+        return runGitCommandSync(["checkout", "--detach", checkoutTarget], in: directory).success
+    }
 
-        if mirroredSourceRemoteBranchExists(ref, in: directory) {
-            let mirroredRef = Self.mirroredSourceRemoteTrackingRef(for: ref)
-            let checkoutResult = runGitCommandSync(["checkout", "-B", ref, mirroredRef], in: directory)
-            if !checkoutResult.success {
-                return false
-            }
-            return resetToRemoteBranch(ref, in: directory)
+    static func detachedCheckoutTarget(
+        for ref: String,
+        localBranchExists: Bool,
+        originBranchExists: Bool,
+        mirroredSourceRemoteBranchExists: Bool
+    ) -> String {
+        if originBranchExists {
+            return "refs/remotes/origin/\(ref)"
         }
-
-        // Fallback for commit SHA/short SHA: detached checkout.
-        let detachedCheckout = runGitCommandSync(["checkout", "--detach", ref], in: directory)
-        return detachedCheckout.success
+        if mirroredSourceRemoteBranchExists {
+            return mirroredSourceRemoteTrackingRef(for: ref)
+        }
+        if localBranchExists {
+            return "refs/heads/\(ref)"
+        }
+        return ref
     }
 
     static func mirroredSourceRemoteTrackingRef(for branchName: String) -> String {
@@ -1076,23 +1081,6 @@ class TestRunner: ObservableObject {
         }
     }
     
-    private func resetToRemoteBranch(_ branchName: String, in directory: URL) -> Bool {
-        // Check if remote branch exists.
-        let resetTarget: String
-        if originBranchExists(branchName, in: directory) {
-            resetTarget = "origin/\(branchName)"
-        } else if mirroredSourceRemoteBranchExists(branchName, in: directory) {
-            resetTarget = Self.mirroredSourceRemoteTrackingRef(for: branchName)
-        } else {
-            print("TestRunner: Remote branch for '\(branchName)' does not exist, skipping reset")
-            return true
-        }
-        
-        // Reset local branch to match remote.
-        let resetResult = runGitCommandSync(["reset", "--hard", resetTarget], in: directory)
-        return resetResult.success
-    }
-
     static func discardWorkspaceLocalChangesCommandArguments() -> [[String]] {
         [
             ["reset", "--hard", "HEAD"],
