@@ -28,6 +28,8 @@ targets:
         excludes:
           - "**/Preview Content/**"
           - "Resources/ThirdPartyLicenses/**"
+          - "Resources/NotificationSounds/Candidates/**"
+          - "Resources/NotificationSounds/README.md"
       - path: Shared
     settings:
       PRODUCT_BUNDLE_IDENTIFIER: com.atastypixel.Tests
@@ -49,6 +51,9 @@ targets:
       - path: Tests/Assets.xcassets
       - path: Tests/Resources/post-commit
         buildPhase: resources
+      - path: Tests/Resources/NotificationSounds/Final/Tests-Ignition.wav
+      - path: Tests/Resources/NotificationSounds/Final/Tests-Fracture.wav
+      - path: Tests/Resources/NotificationSounds/Final/Tests-Resolved.wav
     dependencies:
       - target: TestsCLI
     postCompileScripts:

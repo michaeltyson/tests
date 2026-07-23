@@ -13,16 +13,19 @@
 		1E7DBE57B19AB1C39526F817 /* SettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A86432567E14F908C05691FB /* SettingsStore.swift */; };
 		38812B92E18FFFEE7D9062D3 /* TestGraphSidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72B671FCAB9B2322B3DE044E /* TestGraphSidebarView.swift */; };
 		3CB1951EA7DF7B8E9780DF67 /* TestRunnerQueueTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17CCD2B2054DFD8D74802B90 /* TestRunnerQueueTests.swift */; };
+		4DF06C5A425D2D19E29A3BF5 /* Tests-Resolved.wav in Resources */ = {isa = PBXBuildFile; fileRef = 0C09769CD7B84F88277D1AFF /* Tests-Resolved.wav */; };
 		505A44D4094603E02A92C75A /* AppMain.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB8E198EBD50FD758A3A9214 /* AppMain.swift */; };
 		529B05BDE9A162CC934FCD09 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33B33AF9EA201BF6575479DB /* AppDelegate.swift */; };
 		531FA0357761BEF782BA7AC2 /* TestAPIController.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF7F493CF07E02DD88C1A21B /* TestAPIController.swift */; };
 		5EAC5173A8C2365186127FB6 /* TestResultStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D8052D17EF6B8ACA9632DDF /* TestResultStore.swift */; };
+		5EF31C22420658D3AB1D0E5D /* Tests-Ignition.wav in Resources */ = {isa = PBXBuildFile; fileRef = F283F22F701CF1BF73571351 /* Tests-Ignition.wav */; };
 		7F0ACE9BB9139044101EFFC0 /* TestRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71A04923B28A0BF7FA85BE86 /* TestRunner.swift */; };
 		80EEA82BA930D6D978839F46 /* GitHistoryServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A8529EFF375DC9EF3EB1364 /* GitHistoryServiceTests.swift */; };
 		85E3E4CA2BF8C3FA8F515210 /* BranchSelectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5B8AF29C563188760E0C487 /* BranchSelectionView.swift */; };
 		86AB90D73CB1CE643738D430 /* TestProgressView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D65B4D003069CA3C5DAEDC17 /* TestProgressView.swift */; };
 		9A06A75ADA74359240A05A9D /* TestHistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B59E8035D9B3114339B3025 /* TestHistoryView.swift */; };
 		A9E86B2C87B53C243B1F2C63 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 69811255F74D2C8DD69DCE54 /* Assets.xcassets */; };
+		AF785BDD5431E33E92582591 /* Tests-Fracture.wav in Resources */ = {isa = PBXBuildFile; fileRef = DADF72B74F488C5EEB5C575E /* Tests-Fracture.wav */; };
 		B256E1D3129980BD1D608A65 /* TestsCLI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4FEDFD386C4633980CBE5BC5 /* TestsCLI.swift */; };
 		B6CA73E071CE265D61DDFA2B /* TestsAPIProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA77139FB4D14ACC8DA72932 /* TestsAPIProtocol.swift */; };
 		B74280BD95DA8599D052D9FF /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E894C0A1C0030FE6EBC2210C /* ContentView.swift */; };
@@ -56,6 +59,7 @@
 
 /* Begin PBXFileReference section */
 		0849AE0A26506225AE13FF19 /* Tests.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Tests.entitlements; sourceTree = "<group>"; };
+		0C09769CD7B84F88277D1AFF /* Tests-Resolved.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = "Tests-Resolved.wav"; sourceTree = "<group>"; };
 		12EADF7E0D2E1A07490336DD /* TestsUnitTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TestsUnitTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		173CFD9D293BDAC85421AFA2 /* TestAPIControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TestAPIControllerTests.swift; sourceTree = "<group>"; };
 		17CCD2B2054DFD8D74802B90 /* TestRunnerQueueTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TestRunnerQueueTests.swift; sourceTree = "<group>"; };
@@ -79,10 +83,12 @@
 		B731028D0638307B4128F13D /* TestDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TestDetailView.swift; sourceTree = "<group>"; };
 		D0BE5F4D653F4B021BC675EF /* MenuBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarView.swift; sourceTree = "<group>"; };
 		D65B4D003069CA3C5DAEDC17 /* TestProgressView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TestProgressView.swift; sourceTree = "<group>"; };
+		DADF72B74F488C5EEB5C575E /* Tests-Fracture.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = "Tests-Fracture.wav"; sourceTree = "<group>"; };
 		E4E7B816A151A79F73016989 /* Tests.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Tests.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		E622C93770E8BF0D77D30EC6 /* TestRun.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TestRun.swift; sourceTree = "<group>"; };
 		E894C0A1C0030FE6EBC2210C /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		EA77139FB4D14ACC8DA72932 /* TestsAPIProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TestsAPIProtocol.swift; sourceTree = "<group>"; };
+		F283F22F701CF1BF73571351 /* Tests-Ignition.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = "Tests-Ignition.wav"; sourceTree = "<group>"; };
 		FB8E198EBD50FD758A3A9214 /* AppMain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppMain.swift; sourceTree = "<group>"; };
 		FC3686EBEC630E0944DB35CF /* GitHistoryModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitHistoryModels.swift; sourceTree = "<group>"; };
 		FD09D940C32FC32564E903DC /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
@@ -138,6 +144,14 @@
 			path = Shared;
 			sourceTree = "<group>";
 		};
+		589695AC9506887B0A5F9D48 /* NotificationSounds */ = {
+			isa = PBXGroup;
+			children = (
+				E36B10B8AC03DCC08F3C542F /* Final */,
+			);
+			path = NotificationSounds;
+			sourceTree = "<group>";
+		};
 		902418055244045CCEA236F4 = {
 			isa = PBXGroup;
 			children = (
@@ -182,6 +196,7 @@
 			isa = PBXGroup;
 			children = (
 				B54A2071AAA84D34A3A5ACE6 /* post-commit */,
+				589695AC9506887B0A5F9D48 /* NotificationSounds */,
 			);
 			path = Resources;
 			sourceTree = "<group>";
@@ -198,6 +213,16 @@
 				D65B4D003069CA3C5DAEDC17 /* TestProgressView.swift */,
 			);
 			path = Views;
+			sourceTree = "<group>";
+		};
+		E36B10B8AC03DCC08F3C542F /* Final */ = {
+			isa = PBXGroup;
+			children = (
+				DADF72B74F488C5EEB5C575E /* Tests-Fracture.wav */,
+				F283F22F701CF1BF73571351 /* Tests-Ignition.wav */,
+				0C09769CD7B84F88277D1AFF /* Tests-Resolved.wav */,
+			);
+			path = Final;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -292,6 +317,9 @@
 			buildActionMask = 2147483647;
 			files = (
 				A9E86B2C87B53C243B1F2C63 /* Assets.xcassets in Resources */,
+				AF785BDD5431E33E92582591 /* Tests-Fracture.wav in Resources */,
+				5EF31C22420658D3AB1D0E5D /* Tests-Ignition.wav in Resources */,
+				4DF06C5A425D2D19E29A3BF5 /* Tests-Resolved.wav in Resources */,
 				B827D5D874AD8C7C4A5CDA8A /* TestsCLI in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

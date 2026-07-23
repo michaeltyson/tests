@@ -1,4 +1,5 @@
 import XCTest
+import UserNotifications
 @testable import Tests
 
 final class TestRunnerQueueTests: XCTestCase {
@@ -1005,8 +1006,32 @@ final class TestRunnerQueueTests: XCTestCase {
 
         XCTAssertEqual(content.title, "Tests Started")
         XCTAssertEqual(content.body, "Running tests on branch: develop")
+        XCTAssertEqual(TestUserNotification.startSoundFilename, "Tests-Ignition.wav")
         XCTAssertEqual(content.categoryIdentifier, TestUserNotification.startCategoryIdentifier)
         XCTAssertEqual(content.userInfo[TestUserNotification.branchUserInfoKey] as? String, "develop")
+    }
+
+    func testCompletionNotificationContentUsesCustomOutcomeSounds() {
+        var success = TestRun(status: .success)
+        success.passingCount = 12
+        success.totalCount = 12
+        let successContent = TestRunner.testCompletionNotificationContent(testRun: success)
+
+        var failure = TestRun(status: .failed)
+        failure.passingCount = 10
+        failure.failingCount = 2
+        failure.totalCount = 12
+        let failureContent = TestRunner.testCompletionNotificationContent(testRun: failure)
+
+        XCTAssertEqual(TestUserNotification.successSoundFilename, "Tests-Resolved.wav")
+        XCTAssertEqual(TestUserNotification.failureSoundFilename, "Tests-Fracture.wav")
+        XCTAssertEqual(successContent.title, "Tests Passed ✅")
+        XCTAssertEqual(failureContent.title, "Tests Failed ❌")
+        XCTAssertEqual(failureContent.categoryIdentifier, TestUserNotification.failureCategoryIdentifier)
+        XCTAssertNotNil(successContent.sound)
+        XCTAssertNotNil(failureContent.sound)
+        XCTAssertNotEqual(successContent.sound, UNNotificationSound.default)
+        XCTAssertNotEqual(failureContent.sound, UNNotificationSound.default)
     }
 
     func testNotificationCategoriesIncludeStartActions() {

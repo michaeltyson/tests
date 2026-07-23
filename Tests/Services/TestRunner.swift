@@ -16,6 +16,10 @@ enum TestUserNotification {
     static let failureCategoryIdentifier = "TEST_FAILURE"
     static let errorCategoryIdentifier = "TEST_ERROR"
 
+    static let startSoundFilename = "Tests-Ignition.wav"
+    static let failureSoundFilename = "Tests-Fracture.wav"
+    static let successSoundFilename = "Tests-Resolved.wav"
+
     static let cancelActionIdentifier = "CANCEL_TESTS"
     static let prohibitBranchActionIdentifier = "PROHIBIT_BRANCH_TESTS"
     static let openReportsActionIdentifier = "OPEN_REPORTS"
@@ -2673,10 +2677,14 @@ class TestRunner: ObservableObject {
         let content = UNMutableNotificationContent()
         content.title = "Tests Started"
         content.body = "Running tests on branch: \(branchName)"
-        content.sound = .default
+        content.sound = customNotificationSound(named: TestUserNotification.startSoundFilename)
         content.categoryIdentifier = TestUserNotification.startCategoryIdentifier
         content.userInfo = [TestUserNotification.branchUserInfoKey: branchName]
         return content
+    }
+
+    private static func customNotificationSound(named filename: String) -> UNNotificationSound {
+        UNNotificationSound(named: UNNotificationSoundName(rawValue: filename))
     }
     
     private func sendTestStartNotification(branchName: String) {
@@ -2983,9 +2991,7 @@ class TestRunner: ObservableObject {
         Self.workspaceBuildArtifactDirectory(in: workspaceDirectory)
     }
     
-    private func sendTestCompletionNotification(testRun: TestRun) {
-        let center = UNUserNotificationCenter.current()
-        
+    static func testCompletionNotificationContent(testRun: TestRun) -> UNMutableNotificationContent {
         let content = UNMutableNotificationContent()
         let passingCount = testRun.passingCount ?? 0
         let failingCount = testRun.failingCount ?? 0
@@ -2996,18 +3002,12 @@ class TestRunner: ObservableObject {
         case .success:
             content.title = "Tests Passed ✅"
             content.body = "\(passingCount) of \(totalCount) tests passed"
-            content.sound = .default
+            content.sound = customNotificationSound(named: TestUserNotification.successSoundFilename)
         case .failed:
             content.title = "Tests Failed ❌"
             content.body = "\(failingCount) of \(totalCount) tests failed (\(passingCount) passed)"
-            // Use a more prominent sound for failures
-            if #available(macOS 12.0, *) {
-                content.sound = UNNotificationSound.defaultCritical
-                content.interruptionLevel = .critical
-            } else {
-                content.sound = .default
-            }
-            content.categoryIdentifier = "TEST_FAILURE"
+            content.sound = customNotificationSound(named: TestUserNotification.failureSoundFilename)
+            content.categoryIdentifier = TestUserNotification.failureCategoryIdentifier
         case .error:
             content.title = "Test Error ❌"
             if let errorDesc = testRun.errorDescription {
@@ -3015,23 +3015,24 @@ class TestRunner: ObservableObject {
             } else {
                 content.body = "An error occurred during test execution"
             }
-            // Use a more prominent sound for errors
-            if #available(macOS 12.0, *) {
-                content.sound = UNNotificationSound.defaultCritical
-                content.interruptionLevel = .critical
-            } else {
-                content.sound = .default
-            }
-            content.categoryIdentifier = "TEST_ERROR"
+            content.sound = customNotificationSound(named: TestUserNotification.failureSoundFilename)
+            content.categoryIdentifier = TestUserNotification.errorCategoryIdentifier
         case .warnings:
             content.title = "Tests Completed with Warnings ⚠️"
             content.body = "\(passingCount) of \(totalCount) tests passed"
-            content.sound = .default
+            content.sound = customNotificationSound(named: TestUserNotification.successSoundFilename)
         default:
             content.title = "Tests Completed"
             content.body = "\(passingCount) passed, \(failingCount) failed"
             content.sound = .default
         }
+
+        return content
+    }
+
+    private func sendTestCompletionNotification(testRun: TestRun) {
+        let center = UNUserNotificationCenter.current()
+        let content = Self.testCompletionNotificationContent(testRun: testRun)
         
         let request = UNNotificationRequest(
             identifier: UUID().uuidString,
