@@ -60,6 +60,7 @@ class TestRunner: ObservableObject {
     private var activeBranchName: String?
     private var activeDisplayBranchName: String?
     private var activeShowsErrors = true
+    private var activeNotificationSound: NSSound?
     
     private let tempRootFolder: URL
     private let fileManager = FileManager.default
@@ -2677,19 +2678,16 @@ class TestRunner: ObservableObject {
         let content = UNMutableNotificationContent()
         content.title = "Tests Started"
         content.body = "Running tests on branch: \(branchName)"
-        content.sound = customNotificationSound(named: TestUserNotification.startSoundFilename)
+        content.sound = nil
         content.categoryIdentifier = TestUserNotification.startCategoryIdentifier
         content.userInfo = [TestUserNotification.branchUserInfoKey: branchName]
         return content
-    }
-
-    private static func customNotificationSound(named filename: String) -> UNNotificationSound {
-        UNNotificationSound(named: UNNotificationSoundName(rawValue: filename))
     }
     
     private func sendTestStartNotification(branchName: String) {
         let center = UNUserNotificationCenter.current()
         let content = Self.testStartNotificationContent(branchName: branchName)
+        playNotificationSound(named: TestUserNotification.startSoundFilename)
         
         let request = UNNotificationRequest(
             identifier: UUID().uuidString,
@@ -3002,11 +3000,11 @@ class TestRunner: ObservableObject {
         case .success:
             content.title = "Tests Passed ✅"
             content.body = "\(passingCount) of \(totalCount) tests passed"
-            content.sound = customNotificationSound(named: TestUserNotification.successSoundFilename)
+            content.sound = nil
         case .failed:
             content.title = "Tests Failed ❌"
             content.body = "\(failingCount) of \(totalCount) tests failed (\(passingCount) passed)"
-            content.sound = customNotificationSound(named: TestUserNotification.failureSoundFilename)
+            content.sound = nil
             content.categoryIdentifier = TestUserNotification.failureCategoryIdentifier
         case .error:
             content.title = "Test Error ❌"
@@ -3015,16 +3013,16 @@ class TestRunner: ObservableObject {
             } else {
                 content.body = "An error occurred during test execution"
             }
-            content.sound = customNotificationSound(named: TestUserNotification.failureSoundFilename)
+            content.sound = nil
             content.categoryIdentifier = TestUserNotification.errorCategoryIdentifier
         case .warnings:
             content.title = "Tests Completed with Warnings ⚠️"
             content.body = "\(passingCount) of \(totalCount) tests passed"
-            content.sound = customNotificationSound(named: TestUserNotification.successSoundFilename)
+            content.sound = nil
         default:
             content.title = "Tests Completed"
             content.body = "\(passingCount) passed, \(failingCount) failed"
-            content.sound = .default
+            content.sound = nil
         }
 
         return content
@@ -3033,6 +3031,9 @@ class TestRunner: ObservableObject {
     private func sendTestCompletionNotification(testRun: TestRun) {
         let center = UNUserNotificationCenter.current()
         let content = Self.testCompletionNotificationContent(testRun: testRun)
+        if let filename = Self.notificationSoundFilename(for: testRun.status) {
+            playNotificationSound(named: filename)
+        }
         
         let request = UNNotificationRequest(
             identifier: UUID().uuidString,
@@ -3043,6 +3044,44 @@ class TestRunner: ObservableObject {
         center.add(request) { error in
             if let error = error {
                 print("TestRunner: Failed to send completion notification: \(error)")
+            }
+        }
+    }
+
+    static func notificationSoundFilename(for status: TestRunStatus) -> String? {
+        switch status {
+        case .success, .warnings:
+            return TestUserNotification.successSoundFilename
+        case .failed, .error:
+            return TestUserNotification.failureSoundFilename
+        default:
+            return nil
+        }
+    }
+
+    private func playNotificationSound(named filename: String) {
+        let center = UNUserNotificationCenter.current()
+        center.getNotificationSettings { [weak self] settings in
+            guard settings.soundSetting == .enabled else { return }
+
+            DispatchQueue.main.async {
+                // usernotificationsd can silently substitute the default alert sound for a
+                // bundled custom sound. Play the resource in-process while still honoring
+                // the notification sound permission, and keep the notification itself silent.
+                guard
+                    let self,
+                    let soundURL = Bundle.main.url(forResource: filename, withExtension: nil),
+                    let sound = NSSound(contentsOf: soundURL, byReference: false)
+                else {
+                    print("TestRunner: Failed to load notification sound: \(filename)")
+                    return
+                }
+
+                self.activeNotificationSound?.stop()
+                self.activeNotificationSound = sound
+                if !sound.play() {
+                    print("TestRunner: Failed to play notification sound: \(filename)")
+                }
             }
         }
     }
