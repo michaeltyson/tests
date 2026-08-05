@@ -1721,11 +1721,17 @@ class TestRunner: ObservableObject {
         return trimmed.allSatisfy(\.isHexDigit)
     }
 
-    private func cancelActiveRunForQueueReplacement() {
+    func cancelActiveRunForQueueReplacement() {
         guard !isCancelled else { return }
         isCancelled = true
         
-        if let testRun = currentTestRun {
+        if var testRun = currentTestRun {
+            testRun.status = .error
+            testRun.duration = Date().timeIntervalSince(testRun.timestamp)
+            testRun.errorDescription = "Run superseded by a newer request."
+            testRun.failureSummary = "Run superseded by a newer request."
+            testRun.outputLog = output
+            publishCompletedRun(testRun)
             NotificationCenter.default.post(name: NSNotification.Name("DeleteTestRun"), object: testRun)
         }
         

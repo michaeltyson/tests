@@ -831,15 +831,34 @@ final class TestRunnerQueueTests: XCTestCase {
         current.branchName = "develop"
         runner.currentTestRun = current
 
+        var completedRuns: [TestRun] = []
+        let observer = NotificationCenter.default.addObserver(
+            forName: .testRunDidComplete,
+            object: runner,
+            queue: nil
+        ) { notification in
+            if let testRun = notification.userInfo?["testRun"] as? TestRun {
+                completedRuns.append(testRun)
+            }
+        }
+        defer { NotificationCenter.default.removeObserver(observer) }
+
         let firstAction = runner.dispatchIncomingRun(branchName: "develop", isManualRun: false)
         XCTAssertEqual(firstAction, .queuedAndCancelActive)
         XCTAssertEqual(runner.queuedRunCount, 1)
         XCTAssertEqual(runner.queuedRunBranchesForTesting, ["develop"])
 
+        runner.cancelActiveRunForQueueReplacement()
+        XCTAssertEqual(completedRuns.count, 1)
+        XCTAssertEqual(completedRuns.first?.id, current.id)
+        XCTAssertEqual(completedRuns.first?.status, .error)
+        XCTAssertEqual(completedRuns.first?.errorDescription, "Run superseded by a newer request.")
+
         let secondAction = runner.dispatchIncomingRun(branchName: "develop", isManualRun: false)
         XCTAssertEqual(secondAction, .queuedAndCancelActive)
         XCTAssertEqual(runner.queuedRunCount, 1, "Duplicate same-branch trigger should be deduped")
         XCTAssertEqual(runner.queuedRunBranchesForTesting, ["develop"])
+        XCTAssertEqual(completedRuns.count, 1)
     }
 
     func testSynchronousProcessDrainsOutputLargerThanPipeCapacity() {
